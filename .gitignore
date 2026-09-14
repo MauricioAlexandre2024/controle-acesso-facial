@@ -1,0 +1,26 @@
+# Banco de dados local (contém credenciais e dados) — nunca versionar
+controle_acesso.db
+*.sqlite
+*.sqlite3
+
+# Sessão do WhatsApp Web (perfil de automação do Selenium) — nunca versionar
+.waprofile/
+
+# Ambiente virtual e caches do Python
+venv/
+__pycache__/
+*.py[cod]
+
+# Relatórios gerados
+Relatorio_Controle_Acesso_Facial.xlsx
+
+# Segredos e env
+.env
+.env.*
+*.pem
+*.key
+
+# Arquivos temporários do sistema
+*.swp
+.DS_Store
+Thumbs.db
