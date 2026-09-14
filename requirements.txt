@@ -1,0 +1,20 @@
+# Dependências principais do projeto Controle de Acesso Facial
+# Gerado com base nas versões instaladas — executar: pip install -r requirements.txt
+
+numpy>=2.5.2,<3.0.0
+pillow>=12.3.0,<13.0.0
+opencv-python-headless>=5.0.0,<6.0.0
+dlib>=20.0.1
+deepface>=0.0.100
+tensorflow>=2.21.0
+tf_keras>=2.21.0
+retina-face>=0.0.18
+pandas>=3.0.5,<4.0.0
+requests>=2.34.2,<3.0.0
+selenium>=4.49.0,<5.0.0
+streamlit>=1.62.0,<2.0.0
+altair>=6.2.2,<7.0.0
+openpyxl>=3.1.5,<4.0.0
+fpdf2>=2.8.8,<3.0.0
+geopandas>=1.1.4
+shapely>=2.1.2

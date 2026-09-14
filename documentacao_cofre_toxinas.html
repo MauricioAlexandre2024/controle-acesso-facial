@@ -1,0 +1,4479 @@
+<!DOCTYPE html>
+<html lang='pt-BR'>
+<head>
+<meta charset='utf-8'>
+<title>Documentação — Cofre de Toxinas do MMA</title>
+
+<style>
+  body { font-family: "Segoe UI", Arial, sans-serif; font-size: 11pt;
+         color: #1E293B; line-height: 1.45; margin: 24px 32px; }
+  h1 { font-size: 22pt; color: #0F172A; border-bottom: 3px solid #0D9488;
+       padding-bottom: 6px; }
+  h2 { font-size: 16pt; color: #134E4A; border-bottom: 1px solid #99F6E4;
+       padding-bottom: 3px; margin-top: 26px; }
+  h3 { font-size: 13pt; color: #0F766E; margin-top: 18px; }
+  h4 { font-size: 11.5pt; color: #334155; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0; }
+  th, td { border: 1px solid #CBD5E1; padding: 4px 7px; font-size: 9.5pt;
+           text-align: left; vertical-align: top; }
+  th { background: #0F172A; color: #FFFFFF; }
+  tr:nth-child(even) td { background: #F8FAFC; }
+  pre { font-family: "Courier New", monospace; font-size: 8pt;
+        background: #F1F5F9; border: 1px solid #CBD5E1; padding: 8px;
+        white-space: pre-wrap; word-wrap: break-word; }
+  code { font-family: "Courier New", monospace; background: #F1F5F9;
+         padding: 0 2px; font-size: 9.5pt; }
+  .capa { text-align: center; margin-top: 46px; }
+  .capa h1 { border: none; }
+  .linha { border-top: 1px solid #CBD5E1; margin: 6px 0; }
+  .kpi { display: inline-block; border: 1px solid #0D9488; border-radius: 6px;
+         padding: 6px 10px; margin: 4px; }
+  .divisao { page-break-before: always; }
+</style>
+
+</head>
+<body>
+
+<div class="capa">
+  <p style="font-size:14pt; color:#0F766E;">Ministério do Meio Ambiente</p>
+  <h1>Cofre de Toxinas do MMA</h1>
+  <h2 style="border:none;">Sistema de Controle de Acesso Biométrico</h2>
+  <p style="font-size:12pt;">Documentação Técnica — Implementação, Lógica,
+  Machine Learning / Deep Learning e Algoritmos</p>
+  <p>&nbsp;</p>
+  <table style="width:60%; margin: 0 auto; text-align:center;">
+    <tr><th style="text-align:center;">Aluno(a)</th>
+        <td style="text-align:center;">________________________</td></tr>
+    <tr><th style="text-align:center;">Curso</th>
+        <td style="text-align:center;">________________________</td></tr>
+    <tr><th style="text-align:center;">Professor(a)</th>
+        <td style="text-align:center;">________________________</td></tr>
+    <tr><th style="text-align:center;">Instituição</th>
+        <td style="text-align:center;">________________________</td></tr>
+    <tr><th style="text-align:center;">Data</th>
+        <td style="text-align:center;">__ / __ / ________</td></tr>
+  </table>
+  <p style="font-size:10pt; color:#64748B;">Arquivo-fonte: <code>app.py</code>
+  (~3.391 linhas) · Banco: <code>controle_acesso.db</code> (SQLite)</p>
+</div>
+
+<h2>Sumário</h2>
+<ol>
+  <li>Visão geral do sistema</li>
+  <li>Arquitetura e fluxo de funcionamento</li>
+  <li>Tecnologias e bibliotecas utilizadas</li>
+  <li>Modelo de dados (SQLite)</li>
+  <li>Explicação do código em blocos (do início ao fim)</li>
+  <li>Machine Learning / Deep Learning aplicados</li>
+  <li>Algoritmos relevantes implementados</li>
+  <li>Regras de segurança e controle de acesso</li>
+  <li>Como executar o sistema</li>
+  <li>Observações para apresentação</li>
+</ol>
+<p class="linha"></p>
+
+<h2>1. Visão geral do sistema</h2>
+<p>O sistema <strong>Cofre de Toxinas do MMA</strong> é uma aplicação web
+(desktop/mobile) construída em Python com a biblioteca <strong>Streamlit</strong>.
+Ele simula o controle de acesso físico e lógico a um cofre de alta segurança do
+Ministério do Meio Ambiente, onde estão guardadas toxinas perigosas.</p>
+<p>O acesso é liberado por meio de <strong>reconhecimento facial biométrico</strong>
+e protegido por um <strong>módulo anti-fraude (liveness)</strong> que verifica se
+existe uma pessoa real diante da câmera — e não uma foto, vídeo ou tela de
+celular. Após a validação, o sistema cria uma <strong>sessão</strong> para o
+colaborador e libera os compartimentos do cofre conforme seu
+<strong>nível de acesso cumulativo</strong> (1 a 3).</p>
+<p>Toda operação é registrada em um banco <strong>SQLite</strong>: cada acesso
+permitido ou negado, cada tentativa de fraude, cada erro da aplicação e cada
+configuração. Dashboards analíticos, relatórios em PDF e exportações CSV
+permitem auditoria completa.</p>
+<h3>Fluxo principal</h3>
+<ol>
+  <li>O colaborador escolhe qual compartimento do cofre deseja acessar.</li>
+  <li>Captura a imagem (foto pela webcam) ou um <strong>mini vídeo
+  anti-fraude</strong> (4 a 8 quadros).</li>
+  <li>O módulo de <em>liveness</em> analisa se é uma pessoa real (movimento,
+  piscada, ausência de tela etc.).</li>
+  <li>O rosto do melhor quadro é comparado com todos os colaboradores
+  cadastrados usando o modelo <strong>VGG-Face</strong> (similaridade por
+  distância de cosseno).</li>
+  <li>Se batido, o nível do colaborador é comparado com o nível exigido do
+  compartimento (permissões cumulativas).</li>
+  <li>Acesso permitido → abre a sessão e libera os compartimentos; negado →
+  registra o evento, conta tentativas e pode acionar <em>bloqueio temporário</em>.</li>
+  <li>Eventos de fraude/acesso indevido disparam <strong>alertas por e-mail
+  (SMTP)</strong> e/ou <strong>WhatsApp/SMS (Twilio)</strong>.</li>
+</ol>
+
+<h2>2. Arquitetura e fluxo de funcionamento</h2>
+<p>O projeto é de arquivo único (<code>app.py</code>), onde o <em>frontend</em>
+(interface gráfica) e o <em>backend</em> (lógica, visão computacional e banco)
+coexistem. O Streamlit executa o script de cima para baixo a cada interação e
+mantém o estado da sessão do usuário no <code>st.session_state</code>.</p>
+<h3>Componentes</h3>
+<table>
+  <tr><th>Componente</th><th>Responsabilidade</th></tr>
+  <tr><td><strong>Interface (Streamlit)</strong></td>
+      <td>Radios de navegação, formulários de cadastro, câmera
+      (<code>st.camera_input</code>), dashboards com Altair, botões e barras
+      laterais.</td></tr>
+  <tr><td><strong>Captura</strong></td>
+      <td>Webcam integrada do navegador para foto ou até 8 quadros
+      (mini vídeo).</td></tr>
+  <tr><td><strong>Visão computacional</strong></td>
+      <td>OpenCV (conversões, redimensionamento, FFT, componentes conectados),
+      MTCNN (detecção de faces e landmarks), dlib (68 landmarks do rosto).</td></tr>
+  <tr><td><strong>Deep Learning facial</strong></td>
+      <td>DeepFace com backbone <em>VGG-Face</em>: embeddings e comparação por
+      similaridade de cosseno.</td></tr>
+  <tr><td><strong>Persistência</strong></td>
+      <td>SQLite (<code>controle_acesso.db</code>) com 5 tabelas e controle de
+      versão (<code>PRAGMA user_version</code>); fotos em
+      <code>fotos_cadastradas/</code>.</td></tr>
+  <tr><td><strong>Notificações</strong></td>
+      <td>SMTP via <code>smtplib</code> (Gmail/Outlook/Brevo) e API REST da
+      Twilio via <code>requests</code>.</td></tr>
+  <tr><td><strong>Relatórios</strong></td>
+      <td>PDF gerado com <code>fpdf2</code> (fonte Unicode DejaVu) e gráficos
+      Altair convertidos para PNG com <code>vl-convert</code>.</td></tr>
+</table>
+<h3>Pipeline de validação biométrica</h3>
+<pre>
+Câmera / mini vídeo
+   │
+   ▼
+Captura de quadros (bytes JPEG + timestamp)
+   │
+   ▼
+LIVENESS V2 (6 barreiras anti-fraude)
+   │  - janela temporal ≥ 2 s
+   │  - movimento suficiente (absdiff)
+   │  - padrão orgânico (var. pixel + componentes conectados)
+   │  - parallax 3D (variação geométrica nariz/olhos/boca)
+   │  - piscada (EAR do dlib)
+   │  - ausência de tela (FFT / padrão Moiré)
+   ▼
+Rosto detectado (MTCNN) → recorte do melhor quadro
+   │
+   ▼
+RECONHECIMENTO (DeepFace / VGG-Face)
+   │  - embeds de todos os colaboradores cadastrados
+   │  - distância de cosseno (limiar ≤ 0.35)
+   ▼
+DECISÃO (_conceder_ou_negar)
+   │  - nível do colaborador ≥ nível exigido? → PERMITIDO (abre sessão)
+   │  - caso contrário ou desconhecido → NEGADO + auditoria + alerta
+   ▼
+Possível BLOQUEIO TEMPORÁRIO (3 tentativas em 10 min → 15 min bloqueio)
+</pre>
+
+<h2>3. Tecnologias e bibliotecas utilizadas</h2>
+<p>Ambiente: <strong>Python 3.12</strong> em máquina virtual (venv), sistema
+Linux. A linha 4 desativa a GPU/CUDA (evita mensagens ruidosas no terminal).</p>
+
+<h3>3.1 Biblioteca padrão (Python)</h3>
+<table>
+  <tr><th>Import</th><th>Função usada no código</th></tr>
+  <tr><td><code>os</code></td><td>Variáveis de ambiente, caminhos das fotos,
+      verificação de arquivos.</td></tr>
+  <tr><td><code>io</code></td><td>Leitura de bytes de imagem com
+      <code>Image.open(io.BytesIO(...))</code> e <code>pdf.image()</code>.</td></tr>
+  <tr><td><code>hashlib</code></td><td>SHA-1 dos quadros capturados — impede
+      gravar quadros duplicados no mini vídeo.</td></tr>
+  <tr><td><code>glob</code></td><td>Localiza o arquivo
+      <code>shape_predictor_68_face_landmarks.dat</code> do dlib dentro do
+      pacote instalado.</td></tr>
+  <tr><td><code>json</code></td><td>Serializa os <em>detalhes</em> dos logs e
+      das tentativas (JSON com acentuação).</td></tr>
+  <tr><td><code>time</code></td><td>Timestamps dos quadros e controle de
+      expiração da sessão.</td></tr>
+  <tr><td><code>datetime / timedelta</code></td><td>Datas/horas nos registros,
+      janela e duração do bloqueio.</td></tr>
+  <tr><td><code>email.mime.text.MIMEText</code></td><td>Construção da mensagem
+      do e-mail de alerta.</td></tr>
+  <tr><td><code>smtplib</code></td><td>Conexão SMTP (STARTTLS + login + envio).</td></tr>
+  <tr><td><code>sqlite3</code></td><td>Banco de dados local (DML/DDL).</td></tr>
+  <tr><td><code>math</code></td><td>Seno/tendência na série temporal simulada e
+      aritmética no PDF.</td></tr>
+  <tr><td><code>re</code> (interna)</td><td>Expressões regulares para extrair o
+      número do nível em rótulos.</td></tr>
+</table>
+
+<h3>3.2 Bibliotecas de terceiros</h3>
+<table>
+  <tr><th>Biblioteca</th><th>Versão (venv)</th><th>Propósito no projeto</th></tr>
+  <tr><td><strong>streamlit</strong></td><td>1.62.0</td><td>Interface web completa
+      (inputs, câmera, métricas, gráficos, sidebar).</td></tr>
+  <tr><td><strong>deepface</strong></td><td>0.0.100</td><td>Orquestração do
+      reconhecimento facial (VGG-Face) e comparação por cosseno.</td></tr>
+  <tr><td><strong>opencv-python</strong> (cv2)</td><td>5.0.0.93</td>
+      <td>Controle da vision: decodificação de bytes, redimensionamento,
+      <code>absdiff</code>, FFT, <code>connectedComponents</code>.</td></tr>
+  <tr><td><strong>numpy</strong></td><td>2.5.2</td><td>Vetores, normas
+      euclidianas (EAR/parallax), FFT 2D, estatísticas (percentil, variância).</td></tr>
+  <tr><td><strong>mtcnn</strong></td><td>1.0.0</td><td>Detecção de rostos e
+      keypoints (olhos, nariz, boca) para o liveness.</td></tr>
+  <tr><td><strong>dlib</strong></td><td>20.0.1</td><td>Detector frontal +
+      preditor de 68 landmarks (cálculo do EAR da piscada).</td></tr>
+  <tr><td><strong>face-recognition /
+      face_recognition_models</strong></td><td>1.3.0 / 0.3.0</td>
+      <td>Fornecem o binário <code>shape_predictor_68_face_landmarks.dat</code>
+      usado pelo dlib (localizado via glob).</td></tr>
+  <tr><td><strong>pillow</strong> (PIL)</td><td>12.3.0</td><td>Abertura, recorte
+      e redimensionamento de imagens (thumbnails, recorte do rosto).</td></tr>
+  <tr><td><strong>pandas</strong></td><td>3.0.5</td><td>DataFrames para
+      dashboards, agregações e exportações CSV.</td></tr>
+  <tr><td><strong>altair</strong></td><td>6.2.2</td><td>Gráficos interativos dos
+      dashboards e do relatório PDF.</td></tr>
+  <tr><td><strong>vl-convert-python</strong></td><td>1.9.0.post1</td>
+      <td>Renderiza gráficos Altair em PNG (memória) para o relatório PDF.</td></tr>
+  <tr><td><strong>fpdf2</strong> (fpdf.FPDF)</td><td>2.8.8</td><td>Geração do
+      relatório executivo em PDF com fonte Unicode DejaVu.</td></tr>
+  <tr><td><strong>requests</strong></td><td>2.34.2</td><td>Chamada HTTP à API da
+      Twilio para WhatsApp/SMS.</td></tr>
+  <tr><td><strong>openpyxl</strong> (auxiliar)</td><td>3.1.5</td>
+      <td>Gera a planilha de exemplo <code>Relatorio_Controle_Acesso_Facial.xlsx</code>
+      (script <code>gerar_excel.py</code>).</td></tr>
+</table>
+<p><em>Observação:</em> <code>geopandas</code> e <code>retina-face</code> estão
+instalados como dependências do ecossistema, mas o fluxo principal usa
+<code>detector_backend="skip"</code> (a detecção é feita pelo MTCNN próprio) e
+o mapa GeoPandas não é chamado no app.</p>
+
+<h2>4. Modelo de dados (SQLite)</h2>
+<p>Banco <code>controle_acesso.db</code> com versão atual <strong>3</strong>
+(<code>PRAGMA user_version</code>). As tabelas são criadas em
+<code>init_db()</code> e evoluem via <code>migrar_banco_legado()</code>.</p>
+<table>
+  <tr><th>Tabela</th><th>Colunas</th><th>Finalidade</th></tr>
+  <tr><td><strong>colaboradores</strong></td>
+      <td>id, nome, cargo, divisao, nivel_acesso (1-3), foto_path,
+      data_cadastro</td>
+      <td>Dados e nível de acesso de cada colaborador; referência de foto
+      para o reconhecimento.</td></tr>
+  <tr><td><strong>logs_acesso</strong></td>
+      <td>id, colaborador_nome, setor, data_hora, status
+      (PERMITIDO/NEGADO), detalhes (JSON)</td>
+      <td>Auditoria de todos os eventos de acesso com diagnóstico em JSON
+      (motivo do liveness, distâncias etc.).</td></tr>
+  <tr><td><strong>logs_erros</strong></td>
+      <td>id, data_hora, tipo, modulo, mensagem, descricao, sugerida</td>
+      <td>Registro automático de erros com ajuda amigável para o operador.</td></tr>
+  <tr><td><strong>tentativas_seguranca</strong></td>
+      <td>id, compartimento, data_hora, motivo, detalhes (JSON), origem</td>
+      <td>Histórico de tentativas de fraude/negação por compartimento — base
+      do bloqueio temporário.</td></tr>
+  <tr><td><strong>configuracoes</strong></td>
+      <td>chave (PK), valor</td>
+      <td>Persistência dos alertas (e-mail/Twilio): <code>cfg_email_*</code> e
+      <code>cfg_twilio_*</code>.</td></tr>
+</table>
+<h3>Migrações (user_version)</h3>
+<ul>
+  <li><strong>v0 → v1:</strong> adiciona <code>nivel_acesso</code> (e
+  <code>divisao</code>) e reinicia colaboradores legados para Nível 1.</li>
+  <li><strong>v1 → v2:</strong> adiciona a coluna <code>detalhes</code> (JSON)
+  em <code>logs_acesso</code>.</li>
+  <li><strong>v2 → v3:</strong> cria a tabela <code>configuracoes</code> para
+  persistir as notificações.</li>
+</ul>
+
+<h2>5. Explicação do código em blocos (do início ao fim)</h2>
+<p>A seguir, cada bloco do <code>app.py</code> é explicado na ordem em que
+aparece no arquivo, com a linha de referência, o que faz e o propósito.
+O código-fonte integral está no <strong>Anexo A</strong> (e o script auxiliar
+<code>gerar_excel.py</code> no <strong>Anexo B</strong>).</p>
+
+<h3>Bloco 1 — Importações e desativação da GPU (linhas 1-25)</h3>
+<p>Importa todas as bibliotecas listadas na seção 3. A instrução
+<code>os.environ["CUDA_VISIBLE_DEVICES"] = "-1"</code> no início (antes do
+TensorFlow/DeepFace) impede que o TensorFlow tente usar GPU, evitando avisos e
+erros de driver em máquinas sem CUDA.</p>
+
+<h3>Bloco 2 — Configuração da página e CSS da moldura (linhas 27-62)</h3>
+<p><code>st.set_page_config</code> define título, ícone e layout largo. A
+constante <code>MOLDURA_CIRCULAR_CSS</code> injeta CSS que desenha um círculo
+verde tracejado sobre a câmera (<code>stCameraInput</code>) — orienta o
+usuário a centralizar o rosto. <code>DB_FILE</code> e <code>FOTOS_DIR</code>
+definem o banco e a pasta de fotos, criada se não existir.</p>
+
+<h3>Bloco 3 — Banco de dados e criação das tabelas (linhas 65-127)</h3>
+<p><code>init_db()</code> usa <code>CREATE TABLE IF NOT EXISTS</code> para
+garantir as 5 tabelas (seção 4). Funciona como inicialização idempotente.</p>
+
+<h3>Bloco 4 — Migração do banco legado (linhas 129-176)</h3>
+<p><code>migrar_banco_legado()</code> adapta bancos criados pelas versões
+anteriores do sistema (permissões por setor e níveis 1-4). Primeiro consulta as
+colunas com <code>PRAGMA table_info</code>; adiciona as colunas que faltam;
+usa <code>PRAGMA user_version</code> para executar cada migração uma única vez
+e preenche divisões vazias com "Sem divisão".</p>
+
+<h3>Bloco 5 — Configuração de notificações (linhas 179-267)</h3>
+<p><code>CHAVES_CONFIG_ALERTA</code> lista as chaves persistidas;
+<code>PRESETS_SMTP</code> mapeia os provedores (Gmail, Outlook, Brevo) aos seus
+servidores SMTP. <code>_definir_preset_smtp()</code> preenche host/porta ao
+mudar o provedor no selectbox. <code>_carregar_config_alerta()</code> e
+<code>_salvar_config_alerta()</code> leem/gravam a configuração no banco
+(com <code>ON CONFLICT DO UPDATE</code>). Os três são chamados na inicialização
+(linhas 270-272).</p>
+
+<h3>Bloco 6 — Níveis de acesso e rótulos (linhas 274-316)</h3>
+<p><code>NIVEIS_ACESSO</code> define os três níveis cumulativos do cofre:
+1. <em>Permissão Geral</em>, 2. <em>Diretor de Divisões Específicas</em>,
+3. <em>Ministro do Meio Ambiente</em>. Os helpers <code>nome_nivel</code>,
+<code>descricao_nivel</code> e <code>rotulo_nivel</code> convertem o número em
+texto para a interface (ex.: "Nível 2 – Diretor de Divisões Específicas").</p>
+
+<h3>Bloco 7 — Normalização de compartimentos legados (linhas 319-362)</h3>
+<p><code>COMPARTIMENTOS_LEGADOS</code> mapeia rótulos antigos (níveis 1-4 e
+setores pré-níveis) para os três níveis atuais. <code>normalizar_compartimento</code>
+aplica o mapa ou usa regex (<code>Nível\s*\d</code>) para inferir o nível em
+logs antigos; <code>rotulo_curto_compartimento</code> remove o prefixo
+"Nível N – " para exibição compacta.</p>
+
+<h3>Bloco 8 — Dados simulados do cofre (linhas 365-552)</h3>
+<p><code>DADOS_TOXINAS</code> é o inventário (simulado) com 10 toxinas
+(Ricina, Tetrodotoxina, Toxina Botulínica, Aflatoxina etc.), cada uma com
+periculosidade, estoque, temperatura, validade e estado de conservação.
+<code>DIVISOES_MMA</code> relaciona as divisões do ministério. Dali derivam:
+<code>carregar_dados_toxinas()</code> (DataFrame pandas) e
+<code>serie_temporal_movimentacao()</code>, que gera uma série mensal simulada
+usando seno (sazonalidade) + tendência linear — função
+<code>int((idx+1)*8 + sazonalidade + tendencia)</code>.</p>
+
+<h3>Bloco 9 — Sessão e permissões (linhas 555-576)</h3>
+<p><code>LIMITE_INATIVIDADE_S = 300</code> (5 min). <code>_sessao_valida()</code>
+confere <code>usuario_logado</code> e o timestamp do login; se a inatividade
+exceder 5 minutos, remove a sessão e marca <code>sessao_expirada</code>.
+<code>usuario_tem_nivel(n)</code> retorna True se o usuário logado tem nível
+maior ou igual a n (permissão cumulativa).</p>
+
+<h3>Bloco 10 — Preparação dos logs para dashboards (linhas 579-598)</h3>
+<p><code>_preparar_logs()</code> carrega <code>logs_acesso</code>, renomeia a
+coluna <code>setor</code> para <code>area_dados</code>, normaliza os rótulos
+legados, extrai o <code>nivel</code> por regex, além de criar
+<code>compartimento_curto</code>, <code>data</code> e <code>hora</code>.</p>
+
+<h3>Bloco 11 — Relatório PDF executivo (linhas 601-1112)</h3>
+<p>Conjunto de helpers sobre <code>fpdf2</code>:</p>
+<ul>
+  <li><code>_chart_png()</code> — converte um gráfico Altair em PNG em memória
+  via <code>vl-convert</code>;</li>
+  <li><code>_RelatorioPDF</code> — subclasse que adiciona rodapé com número da
+  página;</li>
+  <li><code>_registrar_fonte_pdf()</code> — registra a fonte Unicode
+  <em>DejaVu Sans</em> (necessária para acentos e travessões);</li>
+  <li><code>_secao_pdf()</code>, <code>_inserir_kpi()</code>,
+  <code>_row_kpis()</code> — barras de seção e cartões de indicadores;</li>
+  <li><code>_inserir_grafico()</code> — insere o PNG com legenda, com quebra de
+  página automática;</li>
+  <li><code>_tabela_pdf()</code> — tabelas com cabeçalho escuro, zebra e
+  destaque de coluna (verde/vermelho para status).</li>
+</ul>
+<p><code>gerar_relatorio_pdf(df_filtrado)</code> monta o documento: cabeçalho
+institucional, indicadores, 4 gráficos de acesso (tendência diária, distribuição
+por nível, horários, top colaboradores), panorama do cofre (estoque e série
+temporal), logs de acesso, equipe, catálogo de toxinas e cadeia de custódia.</p>
+
+<h3>Bloco 12 — Recorte do centro do rosto (linhas 1115-1128)</h3>
+<p><code>recortar_centro_rosto()</code> usa PIL para cortar a região central da
+imagem (20%→80% em x, 5%→85% em y), concentrando o processamento no rosto e
+removendo ruído de fundo.</p>
+
+<h3>Bloco 13 — Detecção de faces com MTCNN (linhas 1130-1159)</h3>
+<p><code>_detector_mtcnn()</code> carrega o detector MTCNN apenas na primeira
+chamada (import lazy). <code>_imgs_bytes_para_numpy()</code> decodifica os bytes
+JPEG para arrays RGB com OpenCV. <code>_regiao_uniao()</code> retorna a caixa
+que engloba duas caixas de rosto (usada para medir movimento na região comum).
+<em>Por que MTCNN e não o Haar Cascade do OpenCV?</em> — as versões novas do
+OpenCV removeram o <code>CascadeClassifier</code>, e o MTCNN também fornece os
+keypoints (olhos/nariz/boca) necessários ao parallax.</p>
+
+<h3>Bloco 14 — Liveness V2: anti-fraude (linhas 1162-1473)</h3>
+<p>É o coração do sistema. Constantes de limiar (seção 6.2). A função
+<code>avaliar_liveness(frames)</code> recebe a lista de
+<code>(bytes, timestamp)</code> e retorna <code>(aprovado, motivo, detalhes,
+idx_melhor_quadro)</code>, aplicando as 6 barreiras em cadeia. As funções
+auxiliares são: <code>_carregar_preditor_dlib()</code> (localiza o modelo de 68
+landmarks), <code>_ear_dos_olhos()</code> (EAR), <code>_piscada_detectada()</code>,
+<code>_variacao_paralaxe()</code> e <code>_detectar_tela()</code> (FFT). Detalhes
+na seção 6.</p>
+
+<h3>Bloco 15 — Reconhecimento biométrico (linhas 1476-1506)</h3>
+<p><code>_melhor_match_biometrico(temp_test_path)</code> percorre todos os
+cadastrados e chama <code>DeepFace.verify(img1, img2, model_name="VGG-Face",
+detector_backend="skip", distance_metric="cosine",
+enforce_detection=False)</code>, guardando o candidato de menor distância.
+O <code>detector_backend="skip"</code> evita detecção duplicada (o rosto já foi
+recortado), e <code>enforce_detection=False</code> evita exceção em imagem
+difícil. Limiar de aceite: <strong>distância ≤ 0.35</strong>.</p>
+
+<h3>Bloco 16 — Decisão de acesso (linhas 1509-1564)</h3>
+<p><code>_conceder_ou_negar(...)</code> busca o nível real do colaborador no
+banco. Se <code>nivel_colab ≥ nivel_requerido</code>: sucesso, log PERMITIDO,
+cria <code>usuario_logado</code> na sessão (com <code>login_ts</code>) e toast.
+Senão: log NEGADO com motivo "Nível insuficiente", registra tentativa,
+dispara alerta e causa de bloqueio.</p>
+
+<h3>Bloco 17 — Política de bloqueio temporário (linhas 1567-1671)</h3>
+<p>Constantes: <code>JANELA_FRAUDE_S=600</code> (10 min, janela de contagem),
+<code>DURACAO_BLOQUEIO_S=900</code> (15 min de bloqueio) e
+<code>MAX_TENTATIVAS=3</code>. <code>_registrar_tentativa_fraude()</code> insere
+na tabela e conta quantas ocorreram na janela; <code>_bloqueio_ativo()</code>
+calcula (bloqueado, minutos restantes); <code>_tentativas_recentes()</code>
+lista as últimas para a tela; <code>_registrar_e_verificar_bloqueio()</code>
+registra, verifica e dispara o alerta de bloqueio (apenas 1 aviso por sessão,
+controlado por <code>alertou_bloqueio</code>).</p>
+
+<h3>Bloco 18 — Mini vídeo anti-fraude (linhas 1674-1816)</h3>
+<p><code>_render_mini_video()</code> é a UI: <code>st.camera_input</code> captura
+até 8 quadros; a deduplicação usa SHA-1 dos bytes; métrica "Quadros capturados",
+botão de limpar, miniaturas e o botão "Analisar Mini Vídeo e Validar Acesso"
+(desabilitado abaixo de 3 quadros). Na análise: roda o liveness; se negado,
+loga, registra tentativa e (se atingiu o limite) bloqueia; se aprovado, usa o
+melhor quadro para o reconhecimento VGG-Face e a decisão final. Todo o fluxo
+tem <em>try/except</em> com registro de erro.</p>
+
+<h3>Bloco 19 — Registro de logs (linhas 1819-1836)</h3>
+<p><code>registrar_log(nome, area, status, detalhes=None)</code> insere em
+<code>logs_acesso</code> com timestamp e serializa os detalhes em JSON.</p>
+
+<h3>Bloco 20 — Erros e ajuda ao operador (linhas 1839-1960)</h3>
+<p><code>obter_ajuda_erro(tipo, mensagem)</code> devolve (descrição, sugestão)
+amigáveis com base em padrões de texto (ex.: e-mail "535", "timeout",
+Twilio "401", imagem corrompida, biometria sem rosto, banco travado).
+<code>registrar_erro()</code> grava na <code>logs_erros</code>;
+<code>limpar_logs_erros()</code> apaga o histórico.</p>
+
+<h3>Bloco 21 — Notificação por e-mail e WhatsApp/SMS (linhas 1963-2138)</h3>
+<p><code>enviar_alerta_seguranca(area, motivo)</code>:</p>
+<ul>
+  <li><strong>E-mail:</strong> lê a config da Session State, resolve host/porta
+  conforme o provedor (com fallback para o preset), monta mensagem
+  <code>MIMEText</code>, conecta via <code>smtplib.SMTP</code>, faz
+  <code>starttls()</code>, autentica e envia. Erros 535 ganham dica específica
+  por provedor (Gmail Senha de App, Brevo SMTP key, Outlook). Se o checkbox
+  estiver ativo mas incompleto, exibe <em>warning</em> listando os campos
+  faltantes.</li>
+  <li><strong>Twilio:</strong> POST na API
+  <code>api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json</code> com
+  autenticação básica; sucesso HTTP 200/201 → toast. Mesma regra de campos
+  faltantes.</li>
+</ul>
+<p><code>_config_alertas_pronta()</code> valida (checkbox + campos) antes dos
+botões de teste e mostra o que falta. Um <code>st.warning</code> substitui o
+antigo silêncio quando a configuração está incompleta.</p>
+
+<h3>Bloco 22 — Cadastro de colaboradores (linhas 2141-2203)</h3>
+<p><code>salvar_colaborador()</code> valida nome e foto, grava o arquivo JPEG em
+<code>fotos_cadastradas/</code> (nome sanitizado + timestamp), recorta o rosto,
+insere a linha em <code>colaboradores</code> e limpa o formulário.
+<code>carregar_modelo_facial()</code>, com <code>@st.cache_resource</code>,
+carrega o modelo VGG-Face uma única vez para todas as validações.</p>
+
+<h3>Bloco 23 — Sidebar: navegação, sessão e alertas (linhas 2206-2303)</h3>
+<p>Radio de navegação com as 6 telas. Mostra o usuário logado e o nível (ou
+aviso de sessão expirada) com botão "Encerrar Sessão". O expander
+"⚙️ Configurar Notificações" reúne os campos de e-mail (checkbox, provedor com
+<code>on_change</code>, host/porta/login, remetente, senha de app, destino) e
+Twilio (SID, token, número de origem/destino). Persiste ao sair do expander e
+tem os botões "🔔 Enviar alerta de teste" e "🚨 Simular acesso negado
+(gatilho)" — ambos validam a configuração antes do envio.</p>
+
+<h3>Bloco 24 — Abas da aplicação (linhas 2317-3391)</h3>
+<p>Cada aba é envolvida por <code>ao_trocar_aba_guard()</code>, que captura
+erros inesperados e os registra em <code>logs_erros</code>:</p>
+<ul>
+  <li><strong>📸 Cadastro de Colaboradores:</strong> dados pessoais, divisão,
+  nível (cumulativo, com descrição), captura por webcam <em>ou upload</em>
+  (o upload foi preservado aqui; a validação aceita apenas webcam em gravação
+  de imagem que é analisada como proprietária). Lista os cadastrados.</li>
+  <li><strong>📹 Validar Acesso / Login Biométrico:</strong> escolhe o
+  compartimento (nível 1-3); verifica bloqueio ativo (exibe motivos e data das
+  tentativas e encerra); radio entre "Tirar Foto pela Webcam" e
+  "🎥 Mini Vídeo Anti-Fraude". No modo foto, chama recorte + modelo +
+  <code>_melhor_match_biometrico</code> + <code>_conceder_ou_negar</code>.</li>
+  <li><strong>📈 Dashboard Analítico de Acessos:</strong> filtros de período,
+  compartimento, status e nome; métricas de total/permitidos/negados/taxa/média;
+  gráficos de tendência temporal, pizza de status, distribuição por
+  compartimento (níveis cumulativos), equipe, top colaboradores, acessos por
+  hora e o "Diagnóstico de Segurança" (compartimentos mais visados, pessoas
+  desconhecidas e colaboradores sem permissão); exportação CSV e relatório PDF
+  filtrado.</li>
+  <li><strong>📊 Dashboard e Relatórios:</strong> visão consolidada (resumo,
+  filtros, histórico, CSV e PDF completo).</li>
+  <li><strong>🐞 Registro de Erros / Logs:</strong> filtros por tipo/módulo/
+  mensagem/data, resumo com gráfico de barras, lista, e expanção
+  Explicação/Sugestão/Detalhe técnico para cada erro, exportação CSV e limpeza.</li>
+  <li><strong>🔐 Cofre de Toxinas:</strong> tela principal protegida por sessão.
+  Nível 1: catálogo público + missão da sala; Nível 2: inventário e localização
+  (gráficos Altair + estoque/conservação + CSV); Nível 3: dossiê completo,
+  série temporal de movimentações por divisão e cadeia de custódia; Governança
+  (nível 3): métricas, colaboradores, alerta de estado crítico e base completa.</li>
+</ul>
+
+<h2>6. Machine Learning / Deep Learning aplicados</h2>
+<p>O sistema combina <strong>aprendizado profundo</strong> (reconhecimento
+facial) com <strong>visão computacional clássica e estatística</strong> (o
+anti-spoofing).</p>
+
+<h3>6.1 Reconhecimento facial — DeepFace / VGG-Face</h3>
+<p>O reconhecimento usa o <strong>DeepFace</strong> como orquestrador e
+<strong>VGG-Face</strong> como modelo de extração de características
+(<em>embeddings</em>). O VGG-Face é uma rede convolucional profunda treinada na
+classificação de milhares de identidades; criou-se um espaço de características
+onde rostos do mesmo indivíduo ficam próximos.</p>
+<div class="linha"></div>
+<pre>
+DeepFace.verify(
+    img1_path=temp_test_path,     # rosto capturado (recortado)
+    img2_path=cpath,              # foto cadastrada
+    model_name="VGG-Face",        # backbone de embeddings
+    detector_backend="skip",      # já detectamos com o MTCNN
+    distance_metric="cosine",     # similaridade por cosseno
+    enforce_detection=False,      # não lança erro sem rosto detectável
+)
+</pre>
+<p>A rede transforma cada imagem em um vetor (embedding). A
+<strong>similaridade</strong> entre dois rostos é medida pela
+<strong>distância de cosseno</strong>, que varia de 0 (idênticos) a 1 (opostos).
+O sistema aceita o colaborador quando a menor distância entre a captura e os
+cadastrados é <strong>≤ 0.35</strong> — valor padrão recomendado da biblioteca.
+O modelo é carregado uma única vez com <code>@st.cache_resource</code>
+(<code>DeepFace.build_model</code>) para desempenho.</p>
+
+<h3>6.2 Liveness — as 6 barreiras anti-fraude (V2)</h3>
+<p>Uma foto impressa, um vídeo pré-gravado ou uma foto exibida na tela de um
+celular têm características que as distinguem de um rosto real. O módulo usa
+seis barreiras independentes; basta uma falhar para <strong>negar</strong>.</p>
+<table>
+  <tr><th>#</th><th>Barreira</th><th>Limiar</th><th>Decorre de</th></tr>
+  <tr><td>1</td><td>Mínimo de quadros e janela temporal</td>
+      <td>≥ 3 quadros e ≥ 2,0 s</td>
+      <td>Fotos/rajadas são rápidas demais; um rosto real exige tempo para mover
+      a cabeça e piscar.</td></tr>
+  <tr><td>2</td><td>Movimento na região facial</td>
+      <td>absdiff médio ≥ 0,015 (1,5%)</td>
+      <td>Diferença pixel a pixel entre quadros consecutivos na união das caixas;
+      imagem parada falha.</td></tr>
+  <tr><td>3</td><td>Padrão orgânico de movimento</td>
+      <td>≥ 4 componentes conectados</td>
+      <td>Mapa de variância temporal dos pixels do rosto (percentil 75 como
+      limite dinâmico) + <code>connectedComponents</code> de 8-vizinhança; rosto
+      real varia em várias regiões (olhos, boca, bochechas), foto desliza como
+      um bloco único.</td></tr>
+  <tr><td>4</td><td>Parallax 3D</td>
+      <td>std ≥ 0,05</td>
+      <td>Proporções nariz→olhos→boca normalizadas pela distância interocular;
+      girar a cabeça altera essas proporções (3D); uma foto plana só translada
+      (2D) e mantém proporções constantes.</td></tr>
+  <tr><td>5</td><td>Piscada</td>
+      <td>EAR mínimo &lt; 60% do baseline</td>
+      <td><code>Eye Aspect Ratio</code> via 68 landmarks do dlib; fotos e telas
+      não piscam. Baseline é o valor máximo (olho aberto) da sequência.</td></tr>
+  <tr><td>6</td><td>Ausência de tela (Moiré)</td>
+      <td>pico/média na alta frequência &lt; 12,0</td>
+      <td>FFT 2D do recorte do rosto (com janela de Hann); telas produzem grades
+      periódicas de alta frequência (padrão Moiré) — o anel de alta frequência
+      destaca-se.</td></tr>
+</table>
+<p>Cada barreira acumula <code>detalhes</code> diagnósticos (movimento %,
+regiões de variação, parallax, piscada, sinal de tela) que são gravados no JSON
+do log para auditoria e para mensagens explicativas ao usuário.
+As justificativas educam o operador ("as fotos nunca piscam", "foto deslizando
+não tem parallax").</p>
+
+<h3>6.3 Por que essas técnicas?</h3>
+<ul>
+  <li><strong>Fotos impressas:</strong> falham nas barreiras 2, 3, 4 e 5
+      (sem movimento, rigidez, sem piscada).</li>
+  <li><strong>Fotos na tela do celular:</strong> adicionalmente falham na
+      barreira 6 (Moiré da tela).</li>
+  <li><strong>Vídeos pré-gravados passados à câmera:</strong> tendem a ter
+      janela curta, movimento rígido ou sinal de tela — e, se o vídeo não
+      contiver piscada, reprovam na barreira 5.</li>
+  <li><strong>O custo de cada tentativa</strong> (contagem de tentativas com
+      bloqueio após 3 em 10 min) inviabiliza ataques por força bruta.</li>
+</ul>
+
+<h2>7. Algoritmos relevantes implementados</h2>
+
+<h3>7.1 Distância de cosseno (recognition)</h3>
+<p>Dados dois vetores de características A e B:</p>
+<pre>cos(A,B) = (A · B) / (||A|| · ||B||)      →  distancia = 1 - cos</pre>
+<p>Implementada pelo DeepFace. Varre o cadastro em
+<code>_melhor_match_biometrico</code> guardando o candidato de menor distância.</p>
+
+<h3>7.2 Eye Aspect Ratio — EAR (piscada)</h3>
+<p>Com os 6 pontos de contorno de cada olho (índices 36-41 e 42-47 dos 68
+landmarks do dlib):</p>
+<pre>EAR = (|P2-P6| + |P3-P5|) / (2 · |P1-P4|)</pre>
+<p>Olho aberto ≈ 0,25-0,33; piscado muito menor. O código usa
+<code>np.linalg.norm</code> para as distâncias euclidianas. Detecta-se piscada
+quando o mínimo da série <strong>cai abaixo de 60%</strong> do baseline aberto
+(<code>LIMIAR_PISCADA=0.60</code>).</p>
+
+<h3>7.3 FFT 2D + janela de Hann (detecção de tela)</h3>
+<p>No recorte do rosto, <code>_detectar_tela</code>:</p>
+<ol>
+  <li>Redimensiona o rosto para 256×256;</li>
+  <li>Multiplica pela janela de Hann 2D
+      (<code>np.outer(np.hanning(256), np.hanning(256))</code>) — reduz o
+      vazamento espectral das bordas;</li>
+  <li>Aplica <code>np.fft.fft2</code> e desloca o espectro com
+      <code>fftshift</code>;</li>
+  <li>Mascara um <strong>anel de alta frequência</strong> (raio entre 55% e 47%
+      da máxima distância ao centro);</li>
+  <li>Calcula <code>máximo / média</code> nesse anel. Grades de tela concentram
+      energia em picos periódicos → valor alto (≥ 12) indica tela.</li>
+</ol>
+
+<h3>7.4 Componentes conectados (organicidade)</h3>
+<p>A variância pixel a pixel dos rostos alinhados (80×80) gera uma
+<em>máscara</em> das regiões que mais mudaram (≥ percentil 75). Com
+<code>cv2.connectedComponents(connectivity=8)</code> conta-se quantas regiões
+independentes existem. Um rosto real move olhos, bochechas e boca de forma
+independente (≥ 4 regiões); uma foto que desliza move tudo junto (1-3 regiões).</p>
+
+<h3>7.5 Parallax geométrico</h3>
+<p>Para cada quadro, usando os keypoints do MTCNN calcula-se:
+<code>offset_x = (nariz.x - centroOlhos.x) / larguraOlhos</code> e
+<code>offsetY_boca = (boca.y - centroOlhos.y) / larguraOlhos</code>. O desvio
+padrão dessas proporções na sequência é o "parallax". A normalização pelo
+espaço interocular torna a medida invariante à distância da câmera.</p>
+
+<h3>7.6 Diferença absoluta temporal (movimento)</h3>
+<p><code>cv2.absdiff(quadro_a, quadro_b)</code> na região união das caixas de
+rosto, normalizado por 255, média global — mede o quanto a cena mudou entre
+quadros consecutivos.</p>
+
+<h3>7.7 Geração de dados simulados (séries)</h3>
+<p>Sazonalidade senoidal (<code>sin(i/6·π)</code>) + tendência linear
+(<code>(i/n)·4</code>) para compor as movimentações mensais; distribuição dos
+estoques do inventário manual (DADOS_TOXINAS).</p>
+
+<h2>8. Regras de segurança e controle de acesso</h2>
+<h3>8.1 Níveis cumulativos</h3>
+<p>Nível <strong>1</strong> → catálogo público; Nível <strong>2</strong> →
+inventário/localização/movimentação; Nível <strong>3</strong> → dossiê
+completo, cadeia de custódia e governança. Um colaborador de nível N enxerga
+todos os módulos dos níveis 1..N (<code>nivel_acesso >= requerido</code>).</p>
+<h3>8.2 Bloqueio temporário por compartimento</h3>
+<ul>
+  <li>3 tentativas negadas/de fraude na janela de 10 min
+  (<code>JANELA_FRAUDE_S=600</code>) → bloqueio de <strong>15 min</strong>
+  (<code>DURACAO_BLOQUEIO_S=900</code>).</li>
+  <li>O bloqueio é por compartimento (<code>area_requerida</code>); a tela de
+  validação encerra e mostra as tentativas recentes com data/hora, motivo e
+  origem.</li>
+  <li>O alerta de bloqueio é disparado uma única vez por sessão
+  (controle <code>alertou_bloqueio</code> no session_state).</li>
+</ul>
+<h3>8.3 Sessão por inatividade</h3>
+<p>Após <strong>5 minutos</strong> sem interação, a sessão expira e o cofre fica
+inacessível até novo login biométrico (<code>_sessao_valida</code>).</p>
+<h3>8.4 Auditoria</h3>
+<ul>
+  <li><code>logs_acesso</code>: todo evento com status e diagnóstico JSON;</li>
+  <li><code>tentativas_seguranca</code>: histórico de fraudes por compartimento;</li>
+  <li><code>logs_erros</code>: erros com sugestão de resolução;</li>
+  <li>Dashboards com diagnóstico de segurança (compartimentos mais visados,
+  desconhecidos, colaboradores sem permissão).</li>
+</ul>
+<h3>8.5 Notificações</h3>
+<ul>
+  <li>E-mail via SMTP com provedores pré-configurados (Gmail/Outlook/Brevo) e
+  <strong>Senha de App</strong> para contas Google com verificação em 2 etapas;</li>
+  <li>Brevo (smtp-relay.brevo.com:587) como alternativa gratuita sem restrição
+  administrativa — requer: confirmar o remetente no painel, copiar a
+  <strong>SMTP key</strong> no campo *Senha de App* e preencher o
+  <strong>SMTP Login</strong>;</li>
+  <li>WhatsApp/SMS via Twilio (Account SID + Auth Token);</li>
+  <li>IOs mensagens trazem compartimento, data/hora e motivo.</li>
+</ul>
+
+<h2>9. Como executar o sistema</h2>
+<pre>
+# 1) Criar/ativar o ambiente virtual
+python3.12 -m venv venv
+source venv/bin/activate
+
+# 2) Instalar as dependências
+pip install streamlit deepface opencv-python pillow numpy pandas altair             vl-convert-python fpdf2 dlib mtcnn face-recognition requests
+
+# 3) Executar
+./venv/bin/streamlit run app.py --server.port 8502
+
+# (opcional) gerar a planilha de exemplo
+./venv/bin/python gerar_excel.py
+</pre>
+<p>Abrir <code>http://localhost:8502</code>. O banco e a pasta
+<code>fotos_cadastradas/</code> são criados automaticamente na primeira
+execução.</p>
+
+<h2>10. Observações para apresentação</h2>
+<ul>
+  <li>Demonstrar primeiro o <strong>cadastro</strong> de um colaborador (com
+  foto), depois a <strong>validação biométrica</strong>.</li>
+  <li>Mostrar o <strong>mini vídeo anti-fraude</strong> e tentar uma foto exibida
+  na tela do celular — será bloqueada pelas barreiras (movimento/parallax/
+  piscada/Moiré).</li>
+  <li>Abrir o <strong>Dashboard Analítico</strong> e o <strong>Registro de
+  Erros</strong> para evidenciar a auditoria automática.</li>
+  <li>Explicar que o bloqueio temporário protege contra força bruta, e que a
+  expiração de sessão protege o cofre em caso de abandono do terminal.</li>
+  <li>Se possível, deixar a <strong>configuração de alertas</strong> (e-mail e/ou
+  Twilio) pronta antes da apresentação para demonstrar a notificação em tempo
+  real.</li>
+</ul>
+
+<h2>Anexo A — Código-fonte completo: app.py</h2>
+<p>Reprodução integral do arquivo <code>app.py</code> (ambiente na data da
+documentação). As referências de linha citadas na seção 5 correspondem a este
+arquivo.</p>
+<p class="linha"></p>
+import os
+
+# Desativa avisos de GPU/CUDA no terminal
+os.environ[&quot;CUDA_VISIBLE_DEVICES&quot;] = &quot;-1&quot;
+
+import io
+import hashlib
+import glob
+import json
+import time
+from datetime import datetime, timedelta
+from email.mime.text import MIMEText
+import smtplib
+import sqlite3
+from PIL import Image
+import cv2
+import numpy as np
+from deepface import DeepFace
+import pandas as pd
+import requests
+import streamlit as st
+import altair as alt
+import math
+
+from fpdf import FPDF
+
+st.set_page_config(
+    page_title=&quot;Cofre de Toxinas — Ministério do Meio Ambiente&quot;,
+    page_icon=&quot;🔐&quot;,
+    layout=&quot;wide&quot;,
+)
+
+# Moldura circular visual no CSS
+MOLDURA_CIRCULAR_CSS = &quot;&quot;&quot;
+&lt;style&gt;
+div[data-testid=&quot;stCameraInput&quot;] {
+    position: relative;
+    max-width: 500px;
+    margin: 0 auto;
+}
+div[data-testid=&quot;stCameraInput&quot;]::after {
+    content: &quot;&quot;;
+    position: absolute;
+    top: 45%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 250px;
+    height: 300px;
+    border: 3px dashed #00FF66;
+    border-radius: 50%;
+    pointer-events: none;
+    box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.4);
+    z-index: 10;
+}
+&lt;/style&gt;
+&quot;&quot;&quot;
+
+DB_FILE = &quot;controle_acesso.db&quot;
+FOTOS_DIR = &quot;fotos_cadastradas&quot;
+
+if not os.path.exists(FOTOS_DIR):
+    os.makedirs(FOTOS_DIR)
+
+
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute(
+        &quot;&quot;&quot;
+        CREATE TABLE IF NOT EXISTS colaboradores (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome TEXT NOT NULL,
+            cargo TEXT,
+            divisao TEXT,
+            nivel_acesso INTEGER NOT NULL DEFAULT 1,
+            foto_path TEXT NOT NULL,
+            data_cadastro TEXT
+        )
+    &quot;&quot;&quot;
+    )
+    cursor.execute(
+        &quot;&quot;&quot;
+        CREATE TABLE IF NOT EXISTS logs_acesso (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            colaborador_nome TEXT,
+            setor TEXT,
+            data_hora TEXT,
+            status TEXT
+        )
+    &quot;&quot;&quot;
+    )
+    cursor.execute(
+        &quot;&quot;&quot;
+        CREATE TABLE IF NOT EXISTS logs_erros (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            data_hora TEXT,
+            tipo TEXT,
+            modulo TEXT,
+            mensagem TEXT,
+            descricao TEXT,
+            sugerida TEXT
+        )
+    &quot;&quot;&quot;
+    )
+    cursor.execute(
+        &quot;&quot;&quot;
+        CREATE TABLE IF NOT EXISTS tentativas_seguranca (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            compartimento TEXT,
+            data_hora TEXT,
+            motivo TEXT,
+            detalhes TEXT,
+            origem TEXT
+        )
+    &quot;&quot;&quot;
+    )
+    cursor.execute(
+        &quot;&quot;&quot;
+        CREATE TABLE IF NOT EXISTS configuracoes (
+            chave TEXT PRIMARY KEY,
+            valor TEXT
+        )
+    &quot;&quot;&quot;
+    )
+    conn.commit()
+    conn.close()
+
+
+def migrar_banco_legado():
+    &quot;&quot;&quot;Migra o banco antigo (permissões por setor / níveis 1-4) para o novo
+    esquema do Cofre de Toxinas: níveis cumulativos 1-3 e coluna de divisão.&quot;&quot;&quot;
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        colunas = [r[1] for r in cursor.execute(&quot;PRAGMA table_info(colaboradores)&quot;)]
+        if &quot;nivel_acesso&quot; not in colunas:
+            cursor.execute(
+                &quot;ALTER TABLE colaboradores ADD COLUMN nivel_acesso INTEGER NOT NULL DEFAULT 1&quot;
+            )
+        if &quot;divisao&quot; not in colunas:
+            cursor.execute(&quot;ALTER TABLE colaboradores ADD COLUMN divisao TEXT&quot;)
+        # Novo esquema de segurança: os colaboradores existentes do banco
+        # antigo (permissões por setor / níveis 1-4) são reiniciados para o
+        # Nível 1 (Permissão Geral) apenas na primeira execução da migração.
+        cursor.execute(&quot;PRAGMA user_version&quot;)
+        versao = cursor.fetchone()[0]
+        if versao &lt; 1:
+            cursor.execute(&quot;UPDATE colaboradores SET nivel_acesso = 1&quot;)
+            cursor.execute(&quot;PRAGMA user_version = 1&quot;)
+        if versao &lt; 2:
+            cols_logs = [
+                r[1] for r in cursor.execute(&quot;PRAGMA table_info(logs_acesso)&quot;)
+            ]
+            if &quot;detalhes&quot; not in cols_logs:
+                cursor.execute(
+                    &quot;ALTER TABLE logs_acesso ADD COLUMN detalhes TEXT&quot;
+                )
+            cursor.execute(&quot;PRAGMA user_version = 2&quot;)
+        if versao &lt; 3:
+            cursor.execute(
+                &quot;&quot;&quot;
+                CREATE TABLE IF NOT EXISTS configuracoes (
+                    chave TEXT PRIMARY KEY,
+                    valor TEXT
+                )
+                &quot;&quot;&quot;
+            )
+            cursor.execute(&quot;PRAGMA user_version = 3&quot;)
+        cursor.execute(
+            &quot;UPDATE colaboradores SET divisao = &#x27;Sem divisão&#x27; &quot;
+            &quot;WHERE divisao IS NULL OR divisao = &#x27;&#x27;&quot;
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+CHAVES_CONFIG_ALERTA = [
+    &quot;cfg_email_ativo&quot;,
+    &quot;cfg_email_provedor&quot;,
+    &quot;cfg_email_smtp_host&quot;,
+    &quot;cfg_email_smtp_port&quot;,
+    &quot;cfg_email_smtp_login&quot;,
+    &quot;cfg_email_remetente&quot;,
+    &quot;cfg_email_senha&quot;,
+    &quot;cfg_email_destinatario&quot;,
+    &quot;cfg_twilio_ativo&quot;,
+    &quot;cfg_twilio_sid&quot;,
+    &quot;cfg_twilio_token&quot;,
+    &quot;cfg_twilio_de&quot;,
+    &quot;cfg_twilio_para&quot;,
+]
+
+PRESETS_SMTP = {
+    &quot;Gmail&quot;: (&quot;smtp.gmail.com&quot;, &quot;587&quot;),
+    &quot;Outlook&quot;: (&quot;smtp-mail.outlook.com&quot;, &quot;587&quot;),
+    &quot;Brevo&quot;: (&quot;smtp-relay.brevo.com&quot;, &quot;587&quot;),
+    &quot;Outro&quot;: (&quot;&quot;, &quot;&quot;),
+}
+
+
+def _definir_preset_smtp():
+    &quot;&quot;&quot;Preenche host/porta da Session State conforme o provedor escolhido.&quot;&quot;&quot;
+    prov = st.session_state.get(&quot;cfg_email_provedor&quot;, &quot;Gmail&quot;)
+    if prov not in PRESETS_SMTP:
+        prov = &quot;Gmail&quot;
+    if prov == &quot;Outro&quot;:
+        return
+    host, porta = PRESETS_SMTP[prov]
+    st.session_state[&quot;cfg_email_smtp_host&quot;] = host
+    st.session_state[&quot;cfg_email_smtp_port&quot;] = porta
+
+
+def _carregar_config_alerta():
+    &quot;&quot;&quot;Pré-preenche a Session State com as notificações salvas no banco.&quot;&quot;&quot;
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute(
+            &quot;&quot;&quot;
+            CREATE TABLE IF NOT EXISTS configuracoes (
+                chave TEXT PRIMARY KEY,
+                valor TEXT
+            )
+            &quot;&quot;&quot;
+        )
+        linhas = cursor.execute(
+            &quot;SELECT chave, valor FROM configuracoes&quot;
+        ).fetchall()
+        conn.close()
+    except Exception:
+        return
+    for chave, valor in linhas:
+        if chave in CHAVES_CONFIG_ALERTA and chave not in st.session_state:
+            st.session_state[chave] = (
+                valor == &quot;1&quot; if chave.endswith(&quot;_ativo&quot;) else valor
+            )
+
+
+def _salvar_config_alerta():
+    &quot;&quot;&quot;Persiste as configurações de notificação no banco (quando houver mudança).&quot;&quot;&quot;
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        atuais = dict(
+            cursor.execute(&quot;SELECT chave, valor FROM configuracoes&quot;).fetchall()
+        )
+        for chave in CHAVES_CONFIG_ALERTA:
+            valor = st.session_state.get(chave)
+            if valor is None:
+                continue
+            texto = (
+                (&quot;1&quot; if valor else &quot;0&quot;)
+                if isinstance(valor, bool)
+                else str(valor).strip()
+            )
+            if atuais.get(chave) != texto:
+                cursor.execute(
+                    &quot;INSERT INTO configuracoes (chave, valor) VALUES (?, ?) &quot;
+                    &quot;ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor&quot;,
+                    (chave, texto),
+                )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+init_db()
+migrar_banco_legado()
+_carregar_config_alerta()
+
+NIVEIS_ACESSO = {
+    1: {
+        &quot;nome&quot;: &quot;Permissão Geral&quot;,
+        &quot;descricao&quot;: (
+            &quot;Acesso concedido a indivíduos com permissão geral dentro do &quot;
+            &quot;Ministério do Meio Ambiente. Libera o catálogo público e as &quot;
+            &quot;informações gerais sobre o cofre de toxinas.&quot;
+        ),
+    },
+    2: {
+        &quot;nome&quot;: &quot;Diretor de Divisões Específicas&quot;,
+        &quot;descricao&quot;: (
+            &quot;Acesso restrito aos diretores de divisões específicas do &quot;
+            &quot;Ministério. Libera o inventário, a localização e a movimentação &quot;
+            &quot;das toxinas dos compartimentos sob sua responsabilidade.&quot;
+        ),
+    },
+    3: {
+        &quot;nome&quot;: &quot;Ministro do Meio Ambiente&quot;,
+        &quot;descricao&quot;: (
+            &quot;Acesso exclusivo ao ministro do Meio Ambiente. Controle total &quot;
+            &quot;sobre o cofre: dossiê completo, cadeia de custódia, gestão de &quot;
+            &quot;colaboradores e auditoria.&quot;
+        ),
+    },
+}
+
+
+def nome_nivel(nivel):
+    &quot;&quot;&quot;Retorna o nome do nível de acesso.&quot;&quot;&quot;
+    info = NIVEIS_ACESSO.get(nivel)
+    return info[&quot;nome&quot;] if info else f&quot;Nível {nivel}&quot;
+
+
+def descricao_nivel(nivel):
+    &quot;&quot;&quot;Retorna a descrição do nível de acesso.&quot;&quot;&quot;
+    info = NIVEIS_ACESSO.get(nivel)
+    return info[&quot;descricao&quot;] if info else &quot;&quot;
+
+
+def rotulo_nivel(nivel):
+    &quot;&quot;&quot;Ex.: &#x27;Nível 2 – Consulta Cartográfica&#x27;.&quot;&quot;&quot;
+    return f&quot;Nível {nivel} – {nome_nivel(nivel)}&quot;
+
+
+# Mapeia rótulos legados (níveis antigos e setores) para os 3 níveis
+# atuais do Cofre de Toxinas apenas para exibição nos dashboards.
+COMPARTIMENTOS_LEGADOS = {
+    # Níveis antigos (esquema 1-4 de dados geoespaciais)
+    &quot;Nível 1 – Consulta Básica de Imagens&quot;: rotulo_nivel(1),
+    &quot;Nível 2 – Consulta Cartográfica&quot;: rotulo_nivel(2),
+    &quot;Nível 3 – Análise Especializada&quot;: rotulo_nivel(3),
+    &quot;Nível 4 – Governança e Administração de Dados&quot;: rotulo_nivel(3),
+    # Setores antigos (pré-níveis)
+    &quot;Diretoria Executiva&quot;: rotulo_nivel(3),
+    &quot;P&amp;D / Laboratório&quot;: rotulo_nivel(3),
+    &quot;Tesouraria / Cofre&quot;: rotulo_nivel(3),
+    &quot;TI / Servidores&quot;: rotulo_nivel(1),
+    &quot;Recursos Humanos&quot;: rotulo_nivel(1),
+}
+
+
+def normalizar_compartimento(rotulo):
+    &quot;&quot;&quot;Converte rótulos legados de `setor` para o compartimento atual do cofre.&quot;&quot;&quot;
+    if not isinstance(rotulo, str):
+        return rotulo_nivel(1)
+    rotulo = rotulo.strip()
+    if rotulo in COMPARTIMENTOS_LEGADOS:
+        return COMPARTIMENTOS_LEGADOS[rotulo]
+    import re
+
+    m = re.search(r&quot;Nível\s*(\d)&quot;, rotulo)
+    if m:
+        nivel = int(m.group(1))
+        if nivel &gt;= 3:
+            return rotulo_nivel(3)
+        if nivel == 2:
+            return rotulo_nivel(2)
+        return rotulo_nivel(1)
+    return rotulo_nivel(1)
+
+
+def rotulo_curto_compartimento(rotulo):
+    &quot;&quot;&quot;Ex.: &#x27;Nível 2 – Diretor de Divisões Específicas&#x27; -&gt; &#x27;Diretor de Divisões Específicas&#x27;.&quot;&quot;&quot;
+    if isinstance(rotulo, str):
+        import re
+
+        return re.sub(r&quot;^Nível\s*\d+\s*–\s*&quot;, &quot;&quot;, rotulo)
+    return str(rotulo)
+
+
+DADOS_TOXINAS = [
+    {
+        &quot;id_toxina&quot;: &quot;TOX-0001&quot;,
+        &quot;nome&quot;: &quot;Ricina&quot;,
+        &quot;classe&quot;: &quot;Proteína&quot;,
+        &quot;tipo_acao&quot;: &quot;Citotóxica&quot;,
+        &quot;periculosidade&quot;: 5,
+        &quot;dose_letal_mg&quot;: 0.002,
+        &quot;uso&quot;: &quot;Pesquisa / neutralização&quot;,
+        &quot;compartimento&quot;: &quot;Compartimento A-01&quot;,
+        &quot;divisao_responsavel&quot;: &quot;Divisão de Toxicologia Ambiental&quot;,
+        &quot;estoque_unidades&quot;: 12,
+        &quot;data_validade&quot;: &quot;2027-03-15&quot;,
+        &quot;temperatura_c&quot;: -20,
+        &quot;estado_conservacao&quot;: &quot;Estável&quot;,
+    },
+    {
+        &quot;id_toxina&quot;: &quot;TOX-0002&quot;,
+        &quot;nome&quot;: &quot;Saxitoxina&quot;,
+        &quot;classe&quot;: &quot;Biotoxina marinha&quot;,
+        &quot;tipo_acao&quot;: &quot;Neurotóxica&quot;,
+        &quot;periculosidade&quot;: 5,
+        &quot;dose_letal_mg&quot;: 0.20,
+        &quot;uso&quot;: &quot;Controle de efluentes&quot;,
+        &quot;compartimento&quot;: &quot;Compartimento A-02&quot;,
+        &quot;divisao_responsavel&quot;: &quot;Divisão de Emergências Químicas&quot;,
+        &quot;estoque_unidades&quot;: 8,
+        &quot;data_validade&quot;: &quot;2026-11-30&quot;,
+        &quot;temperatura_c&quot;: 4,
+        &quot;estado_conservacao&quot;: &quot;Estável&quot;,
+    },
+    {
+        &quot;id_toxina&quot;: &quot;TOX-0003&quot;,
+        &quot;nome&quot;: &quot;Tetrodotoxina&quot;,
+        &quot;classe&quot;: &quot;Biotoxina marinha&quot;,
+        &quot;tipo_acao&quot;: &quot;Neurotóxica&quot;,
+        &quot;periculosidade&quot;: 5,
+        &quot;dose_letal_mg&quot;: 0.05,
+        &quot;uso&quot;: &quot;Estudos toxicológicos&quot;,
+        &quot;compartimento&quot;: &quot;Compartimento A-03&quot;,
+        &quot;divisao_responsavel&quot;: &quot;Divisão de Pesquisa e Laboratório&quot;,
+        &quot;estoque_unidades&quot;: 5,
+        &quot;data_validade&quot;: &quot;2026-09-12&quot;,
+        &quot;temperatura_c&quot;: -30,
+        &quot;estado_conservacao&quot;: &quot;Atenção&quot;,
+    },
+    {
+        &quot;id_toxina&quot;: &quot;TOX-0004&quot;,
+        &quot;nome&quot;: &quot;Microcistina-LR&quot;,
+        &quot;classe&quot;: &quot;Cianotoxina&quot;,
+        &quot;tipo_acao&quot;: &quot;Hepatotóxica&quot;,
+        &quot;periculosidade&quot;: 3,
+        &quot;dose_letal_mg&quot;: 0.05,
+        &quot;uso&quot;: &quot;Análise de florações&quot;,
+        &quot;compartimento&quot;: &quot;Compartimento B-01&quot;,
+        &quot;divisao_responsavel&quot;: &quot;Divisão de Fiscalização e Segurança Química&quot;,
+        &quot;estoque_unidades&quot;: 40,
+        &quot;data_validade&quot;: &quot;2027-01-20&quot;,
+        &quot;temperatura_c&quot;: -15,
+        &quot;estado_conservacao&quot;: &quot;Estável&quot;,
+    },
+    {
+        &quot;id_toxina&quot;: &quot;TOX-0005&quot;,
+        &quot;nome&quot;: &quot;Aflatoxina B1&quot;,
+        &quot;classe&quot;: &quot;Micotoxina&quot;,
+        &quot;tipo_acao&quot;: &quot;Carcinogênica&quot;,
+        &quot;periculosidade&quot;: 4,
+        &quot;dose_letal_mg&quot;: 65.0,
+        &quot;uso&quot;: &quot;Monitoramento agroquímico&quot;,
+        &quot;compartimento&quot;: &quot;Compartimento B-02&quot;,
+        &quot;divisao_responsavel&quot;: &quot;Divisão de Toxicologia Ambiental&quot;,
+        &quot;estoque_unidades&quot;: 25,
+        &quot;data_validade&quot;: &quot;2026-10-05&quot;,
+        &quot;temperatura_c&quot;: 2,
+        &quot;estado_conservacao&quot;: &quot;Estável&quot;,
+    },
+    {
+        &quot;id_toxina&quot;: &quot;TOX-0006&quot;,
+        &quot;nome&quot;: &quot;Toxina Botulínica Tipo A&quot;,
+        &quot;classe&quot;: &quot;Proteína&quot;,
+        &quot;tipo_acao&quot;: &quot;Neurotóxica&quot;,
+        &quot;periculosidade&quot;: 5,
+        &quot;dose_letal_mg&quot;: 0.001,
+        &quot;uso&quot;: &quot;Produção de antitoxina&quot;,
+        &quot;compartimento&quot;: &quot;Compartimento A-04&quot;,
+        &quot;divisao_responsavel&quot;: &quot;Divisão de Pesquisa e Laboratório&quot;,
+        &quot;estoque_unidades&quot;: 3,
+        &quot;data_validade&quot;: &quot;2027-06-01&quot;,
+        &quot;temperatura_c&quot;: -80,
+        &quot;estado_conservacao&quot;: &quot;Crítico&quot;,
+    },
+    {
+        &quot;id_toxina&quot;: &quot;TOX-0007&quot;,
+        &quot;nome&quot;: &quot;Alfa-amanitina&quot;,
+        &quot;classe&quot;: &quot;Peptídeo&quot;,
+        &quot;tipo_acao&quot;: &quot;Citotóxica&quot;,
+        &quot;periculosidade&quot;: 4,
+        &quot;dose_letal_mg&quot;: 0.15,
+        &quot;uso&quot;: &quot;Estudos bioquímicos&quot;,
+        &quot;compartimento&quot;: &quot;Compartimento B-03&quot;,
+        &quot;divisao_responsavel&quot;: &quot;Divisão de Toxicologia Ambiental&quot;,
+        &quot;estoque_unidades&quot;: 18,
+        &quot;data_validade&quot;: &quot;2026-12-18&quot;,
+        &quot;temperatura_c&quot;: -20,
+        &quot;estado_conservacao&quot;: &quot;Estável&quot;,
+    },
+    {
+        &quot;id_toxina&quot;: &quot;TOX-0008&quot;,
+        &quot;nome&quot;: &quot;Batracotoxina&quot;,
+        &quot;classe&quot;: &quot;Alcaloide&quot;,
+        &quot;tipo_acao&quot;: &quot;Cardiotóxica&quot;,
+        &quot;periculosidade&quot;: 5,
+        &quot;dose_letal_mg&quot;: 0.002,
+        &quot;uso&quot;: &quot;Referência analítica&quot;,
+        &quot;compartimento&quot;: &quot;Compartimento A-05&quot;,
+        &quot;divisao_responsavel&quot;: &quot;Divisão de Emergências Químicas&quot;,
+        &quot;estoque_unidades&quot;: 2,
+        &quot;data_validade&quot;: &quot;2027-02-14&quot;,
+        &quot;temperatura_c&quot;: -80,
+        &quot;estado_conservacao&quot;: &quot;Crítico&quot;,
+    },
+    {
+        &quot;id_toxina&quot;: &quot;TOX-0009&quot;,
+        &quot;nome&quot;: &quot;Brevetoxina&quot;,
+        &quot;classe&quot;: &quot;Biotoxina marinha&quot;,
+        &quot;tipo_acao&quot;: &quot;Neurotóxica&quot;,
+        &quot;periculosidade&quot;: 3,
+        &quot;dose_letal_mg&quot;: 1.0,
+        &quot;uso&quot;: &quot;Controle de marés vermelhas&quot;,
+        &quot;compartimento&quot;: &quot;Compartimento B-04&quot;,
+        &quot;divisao_responsavel&quot;: &quot;Divisão de Fiscalização e Segurança Química&quot;,
+        &quot;estoque_unidades&quot;: 30,
+        &quot;data_validade&quot;: &quot;2027-04-09&quot;,
+        &quot;temperatura_c&quot;: -10,
+        &quot;estado_conservacao&quot;: &quot;Estável&quot;,
+    },
+    {
+        &quot;id_toxina&quot;: &quot;TOX-0010&quot;,
+        &quot;nome&quot;: &quot;Solução padrão de cianeto&quot;,
+        &quot;classe&quot;: &quot;Composto inorgânico&quot;,
+        &quot;tipo_acao&quot;: &quot;Hemotóxica&quot;,
+        &quot;periculosidade&quot;: 2,
+        &quot;dose_letal_mg&quot;: 50.0,
+        &quot;uso&quot;: &quot;Calibração de equipamentos&quot;,
+        &quot;compartimento&quot;: &quot;Compartimento C-01&quot;,
+        &quot;divisao_responsavel&quot;: &quot;Serviços Gerais&quot;,
+        &quot;estoque_unidades&quot;: 60,
+        &quot;data_validade&quot;: &quot;2028-01-30&quot;,
+        &quot;temperatura_c&quot;: 25,
+        &quot;estado_conservacao&quot;: &quot;Estável&quot;,
+    },
+]
+
+
+DIVISOES_MMA = [
+    &quot;Gabinete do Ministro&quot;,
+    &quot;Divisão de Toxicologia Ambiental&quot;,
+    &quot;Divisão de Emergências Químicas&quot;,
+    &quot;Divisão de Fiscalização e Segurança Química&quot;,
+    &quot;Divisão de Pesquisa e Laboratório&quot;,
+    &quot;Serviços Gerais&quot;,
+]
+
+
+def carregar_dados_toxinas():
+    &quot;&quot;&quot;Retorna o inventário (simulado) de toxinas custodiadas no cofre do MMA.&quot;&quot;&quot;
+    return pd.DataFrame(DADOS_TOXINAS)
+
+
+def serie_temporal_movimentacao():
+    &quot;&quot;&quot;Gera uma série temporal mensal (simulada) de movimentações de toxinas.&quot;&quot;&quot;
+    divisoes = [
+        &quot;Divisão de Toxicologia Ambiental&quot;,
+        &quot;Divisão de Emergências Químicas&quot;,
+        &quot;Divisão de Fiscalização e Segurança Química&quot;,
+        &quot;Divisão de Pesquisa e Laboratório&quot;,
+    ]
+    meses = pd.date_range(&quot;2024-01-01&quot;, &quot;2026-08-01&quot;, freq=&quot;MS&quot;)
+    linhas = []
+    for i, mes in enumerate(meses):
+        for idx, divisao in enumerate(divisoes):
+            sazonalidade = (idx + 1) * math.sin(i / 6 * math.pi)
+            tendencia = (i / len(meses)) * 4
+            mov = max(0, int((idx + 1) * 8 + sazonalidade + tendencia))
+            linhas.append(
+                {&quot;divisao&quot;: divisao, &quot;mes&quot;: mes, &quot;movimentacoes&quot;: mov}
+            )
+    return pd.DataFrame(linhas)
+
+
+LIMITE_INATIVIDADE_S = 5 * 60  # 5 minutos sem interação =&gt; sessão expira
+
+
+def _sessao_valida():
+    &quot;&quot;&quot;True se existe sessão ativa e dentro do limite de inatividade.&quot;&quot;&quot;
+    usuario = st.session_state.get(&quot;usuario_logado&quot;)
+    if usuario is None:
+        return False
+    login_ts = usuario.get(&quot;login_ts&quot;, 0)
+    if time.time() - login_ts &gt; LIMITE_INATIVIDADE_S:
+        st.session_state.pop(&quot;usuario_logado&quot;, None)
+        st.session_state[&quot;sessao_expirada&quot;] = True
+        return False
+    return True
+
+
+def usuario_tem_nivel(nivel_requerido):
+    &quot;&quot;&quot;Verifica se o usuário logado possui o nível requerido (cumulativo).&quot;&quot;&quot;
+    if not _sessao_valida():
+        return False
+    usuario = st.session_state.get(&quot;usuario_logado&quot;)
+    return usuario is not None and usuario.get(&quot;nivel_acesso&quot;, 0) &gt;= nivel_requerido
+
+
+def _preparar_logs(df_logs=None):
+    &quot;&quot;&quot;Carrega e normaliza os logs de acesso para o esquema atual do cofre.&quot;&quot;&quot;
+    if df_logs is None:
+        conn = sqlite3.connect(DB_FILE)
+        df_logs = pd.read_sql_query(&quot;SELECT * FROM logs_acesso&quot;, conn)
+        conn.close()
+    df_logs = df_logs.rename(columns={&quot;setor&quot;: &quot;area_dados&quot;})
+    if df_logs.empty:
+        return df_logs
+    df_logs[&quot;area_dados&quot;] = df_logs[&quot;area_dados&quot;].apply(normalizar_compartimento)
+    df_logs[&quot;nivel&quot;] = (
+        df_logs[&quot;area_dados&quot;].astype(str).str.extract(r&quot;Nível\s*(\d)&quot;).astype(int)
+    )
+    df_logs[&quot;compartimento_curto&quot;] = df_logs[&quot;area_dados&quot;].map(
+        rotulo_curto_compartimento
+    )
+    df_logs[&quot;data_hora&quot;] = pd.to_datetime(df_logs[&quot;data_hora&quot;])
+    df_logs[&quot;data&quot;] = df_logs[&quot;data_hora&quot;].dt.date
+    df_logs[&quot;hora&quot;] = df_logs[&quot;data_hora&quot;].dt.hour
+    return df_logs
+
+
+def _chart_png(chart, largura=820, escala=2):
+    &quot;&quot;&quot;Renderiza um gráfico Altair para bytes PNG (em memória).&quot;&quot;&quot;
+    import vl_convert as vlc
+
+    spec = chart.to_dict()
+    spec[&quot;width&quot;] = largura
+    spec[&quot;autosize&quot;] = {&quot;type&quot;: &quot;fit&quot;, &quot;contains&quot;: &quot;padding&quot;}
+    return vlc.vegalite_to_png(spec, scale=escala)
+
+
+class _RelatorioPDF(FPDF):
+    def footer(self):
+        self.set_y(-12)
+        self.set_font(_PDF_FONT, &quot;&quot;, 8)
+        self.set_text_color(148, 163, 184)
+        self.cell(0, 8, f&quot;Página {self.page_no()}&quot;, align=&quot;C&quot;)
+
+
+_PDF_FONT = &quot;dejavu&quot;
+_DEJAVU_TTF = &quot;/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf&quot;
+_DEJAVU_BOLD_TTF = &quot;/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf&quot;
+
+
+def _registrar_fonte_pdf(pdf):
+    &quot;&quot;&quot;Registra a fonte Unicode (DejaVu) para suportar acentos e travessões.&quot;&quot;&quot;
+    if os.path.exists(_DEJAVU_TTF) and os.path.exists(_DEJAVU_BOLD_TTF):
+        pdf.add_font(_PDF_FONT, &quot;&quot;, fname=_DEJAVU_TTF)
+        pdf.add_font(_PDF_FONT, &quot;B&quot;, fname=_DEJAVU_BOLD_TTF)
+        return True
+    return False
+
+
+def _secao_pdf(pdf, numero, titulo):
+    if pdf.get_y() &gt; 248:
+        pdf.add_page()
+    y = pdf.get_y()
+    pdf.set_fill_color(30, 41, 59)
+    pdf.rect(pdf.l_margin, y, 180, 8, style=&quot;F&quot;)
+    pdf.set_font(_PDF_FONT, &quot;B&quot;, 11)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_xy(pdf.l_margin + 3, y + 0.6)
+    pdf.cell(180, 6, f&quot;{numero}. {titulo}&quot;)
+    pdf.set_y(y + 10)
+
+
+def _inserir_kpi(pdf, x, y, w, h, titulo, valor):
+    pdf.set_fill_color(241, 245, 249)
+    pdf.rect(x, y, w, h, style=&quot;F&quot;)
+    pdf.set_text_color(71, 85, 105)
+    pdf.set_font(_PDF_FONT, &quot;B&quot;, 7.5)
+    pdf.set_xy(x + 3, y + 3)
+    pdf.multi_cell(w - 6, 3.4, titulo.upper())
+    pdf.set_font(_PDF_FONT, &quot;B&quot;, 13)
+    pdf.set_text_color(15, 118, 110)
+    pdf.set_xy(x + 3, y + h - 9.5)
+    pdf.cell(w - 6, 6, str(valor))
+    pdf.set_y(y + h + 3)
+
+
+def _row_kpis(pdf, kpis):
+    n = len(kpis)
+    gap = 3
+    w = (180 - gap * (n - 1)) / n
+    h = 18
+    y = pdf.get_y()
+    if y + h + 8 &gt; 262:
+        pdf.add_page()
+        y = pdf.get_y()
+    for i, (titulo, valor) in enumerate(kpis):
+        _inserir_kpi(pdf, pdf.l_margin + i * (w + gap), y, w, h, titulo, valor)
+    pdf.set_y(y + h + 4)
+    pdf.set_text_color(30, 41, 59)
+
+
+def _inserir_grafico(pdf, png, legenda):
+    imagem = Image.open(io.BytesIO(png))
+    w_px, h_px = imagem.size
+    w = 180
+    h = w * h_px / w_px
+    if pdf.get_y() + h + 14 &gt; 278:
+        pdf.add_page()
+    y = pdf.get_y()
+    pdf.image(io.BytesIO(png), x=pdf.l_margin, y=y, w=w, h=h)
+    pdf.set_xy(pdf.l_margin, y + h + 1)
+    pdf.set_font(_PDF_FONT, &quot;&quot;, 8.5)
+    pdf.set_text_color(100, 116, 139)
+    pdf.multi_cell(0, 4, legenda)
+    pdf.ln(2)
+
+
+def _tabela_pdf(pdf, titulo, headers, linhas, col_destaque=None, mapa=None):
+    pdf.set_font(_PDF_FONT, &quot;B&quot;, 11)
+    pdf.set_text_color(30, 41, 59)
+    pdf.cell(0, 8, titulo, new_x=&quot;LMARGIN&quot;, new_y=&quot;NEXT&quot;)
+    pdf.ln(1)
+    if not linhas:
+        pdf.set_font(_PDF_FONT, &quot;&quot;, 9.5)
+        pdf.set_text_color(100, 116, 139)
+        pdf.cell(0, 6, &quot;Nenhum registro encontrado.&quot;, new_x=&quot;LMARGIN&quot;, new_y=&quot;NEXT&quot;)
+        pdf.ln(3)
+        return
+    n = len(headers)
+    lar = [180 / n] * n
+    linha_h = 7
+    x0 = pdf.l_margin
+    if pdf.get_y() + 12 &gt; 270:
+        pdf.add_page()
+    pdf.set_fill_color(15, 23, 42)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font(_PDF_FONT, &quot;B&quot;, 8.5)
+    x = x0
+    for i, h in enumerate(headers):
+        pdf.set_xy(x, pdf.get_y())
+        pdf.cell(lar[i], linha_h, h, border=1, fill=True, align=&quot;C&quot;)
+        x += lar[i]
+    pdf.ln(linha_h)
+    pdf.set_font(_PDF_FONT, &quot;&quot;, 8.5)
+    for j, linha in enumerate(linhas):
+        if pdf.get_y() + 7 &gt; 282:
+            pdf.add_page()
+        zebra = j % 2 == 1
+        x = x0
+        for i, val in enumerate(linha):
+            fill = (248, 250, 252) if zebra else (255, 255, 255)
+            txt = (33, 37, 41)
+            if col_destaque is not None and i == col_destaque and mapa:
+                m = mapa.get(val)
+                if m:
+                    fill, txt = m
+            pdf.set_fill_color(*fill)
+            pdf.set_text_color(*txt)
+            pdf.set_xy(x, pdf.get_y())
+            pdf.cell(
+                lar[i],
+                linha_h,
+                str(val) if i == 0 else f&quot; {val}&quot;,
+                border=1,
+                fill=True,
+                align=&quot;L&quot; if i == 0 else &quot;C&quot;,
+            )
+            x += lar[i]
+        pdf.ln(linha_h)
+    pdf.ln(3)
+
+
+def gerar_relatorio_pdf(df_filtrado=None):
+    &quot;&quot;&quot;Gera um relatório PDF ilustrativo com KPIs, gráficos e tabelas.
+
+    Se `df_filtrado` for informado, a seção de eventos de acesso reflete
+    esses filtros; caso contrário usa todos os registros do banco.
+    &quot;&quot;&quot;
+    df_logs = _preparar_logs(df_filtrado)
+    df_toxinas = carregar_dados_toxinas()
+    df_serie = serie_temporal_movimentacao()
+
+    conn = sqlite3.connect(DB_FILE)
+    df_colabs = pd.read_sql_query(
+        &quot;SELECT id, nome, cargo, divisao, nivel_acesso, data_cadastro &quot;
+        &quot;FROM colaboradores&quot;,
+        conn,
+    )
+    conn.close()
+
+    total = len(df_logs)
+    permitidos = int((df_logs[&quot;status&quot;] == &quot;PERMITIDO&quot;).sum())
+    negados = int((df_logs[&quot;status&quot;] == &quot;NEGADO&quot;).sum())
+    taxa = (permitidos / total * 100) if total else 0.0
+    dias = df_logs[&quot;data&quot;].nunique() if total else 1
+    media_dia = total / dias if dias else 0.0
+    criticas = int((df_toxinas[&quot;estado_conservacao&quot;] == &quot;Crítico&quot;).sum())
+
+    agora = datetime.now()
+    pdf = _RelatorioPDF(format=&quot;A4&quot;)
+    pdf.set_margins(15, 15, 15)
+    _registrar_fonte_pdf(pdf)
+    pdf.add_page()
+
+    # --- Cabeçalho ---
+    pdf.set_fill_color(15, 23, 42)
+    pdf.rect(0, 0, 210, 28, style=&quot;F&quot;)
+    pdf.set_fill_color(13, 148, 136)
+    pdf.rect(0, 28, 210, 2, style=&quot;F&quot;)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font(_PDF_FONT, &quot;B&quot;, 15)
+    pdf.set_xy(10, 7)
+    pdf.cell(0, 8, &quot;COFRE DE TOXINAS — MINISTÉRIO DO MEIO AMBIENTE&quot;)
+    pdf.set_font(_PDF_FONT, &quot;&quot;, 9)
+    pdf.set_xy(10, 16)
+    pdf.cell(
+        0,
+        5,
+        &quot;Sistema de Controle de Acesso Biométrico | Relatório de Segurança&quot;,
+    )
+    pdf.set_font(_PDF_FONT, &quot;&quot;, 8)
+    pdf.set_xy(10, 22)
+    pdf.cell(
+        0,
+        5,
+        f&quot;Gerado em {agora.strftime(&#x27;%d/%m/%Y&#x27;)} às {agora.strftime(&#x27;%H:%M:%S&#x27;)}&quot;,
+    )
+    pdf.set_y(34)
+
+    if df_filtrado is not None:
+        pdf.set_font(_PDF_FONT, &quot;&quot;, 8.5)
+        pdf.set_text_color(100, 116, 139)
+        pdf.multi_cell(
+            0,
+            4,
+            &quot;Obs.: este relatório reflete os filtros ativos no Dashboard Analítico.&quot;,
+        )
+        pdf.ln(2)
+        pdf.set_text_color(30, 41, 59)
+
+    # --- 1. Indicadores ---
+    _secao_pdf(pdf, 1, &quot;Indicadores Executivos&quot;)
+    _row_kpis(
+        pdf,
+        [
+            (&quot;Total de Acessos&quot;, total),
+            (&quot;Acessos Permitidos&quot;, permitidos),
+            (&quot;Tentativas Negadas&quot;, negados),
+        ],
+    )
+    _row_kpis(
+        pdf,
+        [
+            (&quot;Taxa de Aprovação&quot;, f&quot;{taxa:.1f}%&quot;),
+            (&quot;Média / dia&quot;, f&quot;{media_dia:.1f}&quot;),
+            (&quot;Compartimentos monitorados&quot;, df_logs[&quot;nivel&quot;].nunique() if total else 0),
+        ],
+    )
+    _row_kpis(
+        pdf,
+        [
+            (&quot;Toxinas custodiadas&quot;, len(df_toxinas)),
+            (&quot;Unidades em estoque&quot;, int(df_toxinas[&quot;estoque_unidades&quot;].sum())),
+            (&quot;Estado crítico (toxinas)&quot;, criticas),
+        ],
+    )
+
+    # --- 2. Gráficos ---
+    _secao_pdf(pdf, 2, &quot;Dashboard de Acessos — Gráficos Ilustrativos&quot;)
+
+    pdf.set_font(_PDF_FONT, &quot;B&quot;, 10)
+    pdf.set_text_color(30, 41, 59)
+    pdf.cell(0, 6, &quot;2.1 Tendência temporal de acessos&quot;, new_x=&quot;LMARGIN&quot;, new_y=&quot;NEXT&quot;)
+    pdf.ln(1)
+    serie_dia = (
+        df_logs.groupby([&quot;data&quot;, &quot;status&quot;], as_index=False)
+        .size()
+        .rename(columns={&quot;size&quot;: &quot;contagem&quot;})
+    )
+    serie_dia = serie_dia.copy()
+    serie_dia[&quot;data&quot;] = serie_dia[&quot;data&quot;].astype(str)
+    chart_tendencia = (
+        alt.Chart(serie_dia)
+        .mark_line(point=True, strokeWidth=2)
+        .encode(
+            x=alt.X(&quot;data:T&quot;, title=&quot;Data&quot;),
+            y=alt.Y(&quot;contagem:Q&quot;, title=&quot;Nº de acessos&quot;),
+            color=alt.Color(
+                &quot;status:N&quot;,
+                title=&quot;Status&quot;,
+                scale=alt.Scale(
+                    domain=[&quot;PERMITIDO&quot;, &quot;NEGADO&quot;],
+                    range=[&quot;#00C853&quot;, &quot;#D50000&quot;],
+                ),
+            ),
+        )
+        .properties(height=300, title=&quot;Acessos ao longo do tempo por status&quot;)
+    )
+    _inserir_grafico(
+        pdf,
+        _chart_png(chart_tendencia),
+        &quot;Evolução diária dos eventos de acesso, comparando acessos permitidos e negados.&quot;,
+    )
+
+    pdf.set_font(_PDF_FONT, &quot;B&quot;, 10)
+    pdf.set_text_color(30, 41, 59)
+    pdf.cell(
+        0,
+        6,
+        &quot;2.2 Distribuição por compartimento do cofre&quot;,
+        new_x=&quot;LMARGIN&quot;,
+        new_y=&quot;NEXT&quot;,
+    )
+    pdf.ln(1)
+    dist_area = (
+        df_logs.groupby([&quot;compartimento_curto&quot;, &quot;nivel&quot;], as_index=False)
+        .size()
+        .rename(columns={&quot;size&quot;: &quot;contagem&quot;})
+        .sort_values([&quot;nivel&quot;, &quot;compartimento_curto&quot;])
+    )
+    chart_dist = (
+        alt.Chart(dist_area)
+        .mark_bar()
+        .encode(
+            x=alt.X(&quot;contagem:Q&quot;, title=&quot;Nº de eventos&quot;),
+            y=alt.Y(&quot;compartimento_curto:N&quot;, title=&quot;&quot;, sort=&quot;-x&quot;),
+            color=alt.Color(
+                &quot;nivel:O&quot;,
+                title=&quot;Nível&quot;,
+                scale=alt.Scale(
+                    domain=[&quot;1&quot;, &quot;2&quot;, &quot;3&quot;],
+                    range=[&quot;#2E7D32&quot;, &quot;#F9A825&quot;, &quot;#C62828&quot;],
+                ),
+            ),
+        )
+        .properties(height=300, title=&quot;Eventos por nível de segurança&quot;)
+    )
+    _inserir_grafico(
+        pdf,
+        _chart_png(chart_dist),
+        (
+            &quot;Eventos de acesso por nível (verde: Permissão Geral, amarelo: &quot;
+            &quot;Diretores de Divisões, vermelho: Ministro do Meio Ambiente).&quot;
+        ),
+    )
+
+    pdf.set_font(_PDF_FONT, &quot;B&quot;, 10)
+    pdf.set_text_color(30, 41, 59)
+    pdf.cell(0, 6, &quot;2.3 Movimentação por hora do dia&quot;, new_x=&quot;LMARGIN&quot;, new_y=&quot;NEXT&quot;)
+    pdf.ln(1)
+    serie_hora = (
+        df_logs.groupby([&quot;hora&quot;, &quot;status&quot;], as_index=False)
+        .size()
+        .rename(columns={&quot;size&quot;: &quot;contagem&quot;})
+    )
+    chart_hora = (
+        alt.Chart(serie_hora)
+        .mark_bar()
+        .encode(
+            x=alt.X(&quot;hora:O&quot;, title=&quot;Hora do dia&quot;),
+            y=alt.Y(&quot;contagem:Q&quot;, title=&quot;Nº de eventos&quot;),
+            color=alt.Color(
+                &quot;status:N&quot;,
+                scale=alt.Scale(
+                    domain=[&quot;PERMITIDO&quot;, &quot;NEGADO&quot;],
+                    range=[&quot;#00C853&quot;, &quot;#D50000&quot;],
+                ),
+            ),
+        )
+        .properties(height=300, title=&quot;Acessos por horário&quot;)
+    )
+    _inserir_grafico(
+        pdf,
+        _chart_png(chart_hora),
+        &quot;Volume de acessos por hora, útil para identificar horários de pico e de risco.&quot;,
+    )
+
+    pdf.set_font(_PDF_FONT, &quot;B&quot;, 10)
+    pdf.set_text_color(30, 41, 59)
+    pdf.cell(
+        0, 6, &quot;2.4 Colaboradores mais ativos&quot;, new_x=&quot;LMARGIN&quot;, new_y=&quot;NEXT&quot;
+    )
+    pdf.ln(1)
+    top_colabs = (
+        df_logs.groupby(&quot;colaborador_nome&quot;, as_index=False)
+        .size()
+        .rename(columns={&quot;size&quot;: &quot;contagem&quot;})
+        .sort_values(&quot;contagem&quot;, ascending=False)
+        .head(10)
+    )
+    chart_top = (
+        alt.Chart(top_colabs)
+        .mark_bar()
+        .encode(
+            x=alt.X(&quot;contagem:Q&quot;, title=&quot;Nº de eventos&quot;),
+            y=alt.Y(&quot;colaborador_nome:N&quot;, title=&quot;&quot;, sort=&quot;-x&quot;),
+            color=alt.Color(&quot;contagem:Q&quot;, scale=alt.Scale(scheme=&quot;viridis&quot;)),
+        )
+        .properties(height=300, title=&quot;Top colaboradores&quot;)
+    )
+    _inserir_grafico(
+        pdf,
+        _chart_png(chart_top),
+        &quot;Os dez colaboradores com o maior número de eventos de acesso registrados.&quot;,
+    )
+
+    # --- 3. Panorama do cofre ---
+    _secao_pdf(pdf, 3, &quot;Panorama do Cofre de Toxinas&quot;)
+
+    pdf.set_font(_PDF_FONT, &quot;B&quot;, 10)
+    pdf.set_text_color(30, 41, 59)
+    pdf.cell(
+        0,
+        6,
+        &quot;3.1 Estoque de toxinas por classe química&quot;,
+        new_x=&quot;LMARGIN&quot;,
+        new_y=&quot;NEXT&quot;,
+    )
+    pdf.ln(1)
+    est_por_classe = (
+        df_toxinas.groupby(&quot;classe&quot;, as_index=False)
+        .agg(estoque_unidades=(&quot;estoque_unidades&quot;, &quot;sum&quot;))
+    )
+    chart_estoque = (
+        alt.Chart(est_por_classe)
+        .mark_bar()
+        .encode(
+            x=alt.X(&quot;classe:N&quot;, title=&quot;&quot;, sort=&quot;-y&quot;),
+            y=alt.Y(&quot;estoque_unidades:Q&quot;, title=&quot;Unidades em estoque&quot;),
+            color=alt.Color(&quot;classe:N&quot;, legend=None),
+        )
+        .properties(height=300, title=&quot;Unidades em estoque por classe&quot;)
+    )
+    _inserir_grafico(
+        pdf,
+        _chart_png(chart_estoque),
+        &quot;Total de unidades custodiadas no cofre por classe de toxina.&quot;,
+    )
+
+    pdf.set_font(_PDF_FONT, &quot;B&quot;, 10)
+    pdf.set_text_color(30, 41, 59)
+    pdf.cell(
+        0,
+        6,
+        &quot;3.2 Série temporal de movimentações por divisão&quot;,
+        new_x=&quot;LMARGIN&quot;,
+        new_y=&quot;NEXT&quot;,
+    )
+    pdf.ln(1)
+    chart_serie = (
+        alt.Chart(df_serie)
+        .mark_line(point=True)
+        .encode(
+            x=alt.X(&quot;mes:T&quot;, title=&quot;Mês / Ano&quot;),
+            y=alt.Y(&quot;movimentacoes:Q&quot;, title=&quot;Movimentações&quot;),
+            color=alt.Color(&quot;divisao:N&quot;, title=&quot;Divisão&quot;),
+        )
+        .properties(height=300, title=&quot;Movimentações mensais por divisão&quot;)
+    )
+    _inserir_grafico(
+        pdf,
+        _chart_png(chart_serie),
+        &quot;Série mensal simulada de movimentações de toxinas por divisão do ministério.&quot;,
+    )
+
+    # --- 4. Logs de Acesso ---
+    _secao_pdf(pdf, 4, &quot;Logs de Acesso&quot;)
+    mapa_status = {
+        &quot;PERMITIDO&quot;: ((220, 252, 231), (22, 101, 52)),
+        &quot;NEGADO&quot;: ((254, 226, 226), (153, 27, 27)),
+    }
+    logs_linhas = [
+        (r[&quot;data_hora&quot;].strftime(&quot;%d/%m/%Y %H:%M&quot;), r[&quot;colaborador_nome&quot;],
+         r[&quot;compartimento_curto&quot;], r[&quot;nivel&quot;], r[&quot;status&quot;])
+        for _, r in df_logs.sort_values(&quot;data_hora&quot;, ascending=False).iterrows()
+    ]
+    _tabela_pdf(
+        pdf,
+        &quot;Eventos de acesso registrados&quot;,
+        [&quot;Data / Hora&quot;, &quot;Colaborador&quot;, &quot;Compartimento&quot;, &quot;Nível&quot;, &quot;Status&quot;],
+        logs_linhas,
+        col_destaque=4,
+        mapa=mapa_status,
+    )
+
+    # --- 5. Colaboradores ---
+    _secao_pdf(pdf, 5, &quot;Equipe do Cofre&quot;)
+    colabs_linhas = [
+        (r[&quot;nome&quot;], r[&quot;cargo&quot;] or &quot;—&quot;, r[&quot;divisao&quot;] or &quot;Sem divisão&quot;, rotulo_nivel(r[&quot;nivel_acesso&quot;]))
+        for _, r in df_colabs.iterrows()
+    ]
+    _tabela_pdf(
+        pdf,
+        &quot;Colaboradores cadastrados&quot;,
+        [&quot;Nome&quot;, &quot;Cargo / Função&quot;, &quot;Divisão&quot;, &quot;Nível de Acesso&quot;],
+        colabs_linhas,
+    )
+
+    # --- 6. Toxinas ---
+    _secao_pdf(pdf, 6, &quot;Catálogo de Toxinas&quot;)
+    tox_linhas = [
+        (r[&quot;id_toxina&quot;], r[&quot;nome&quot;], r[&quot;classe&quot;], r[&quot;compartimento&quot;],
+         r[&quot;estoque_unidades&quot;], r[&quot;estado_conservacao&quot;])
+        for _, r in df_toxinas.iterrows()
+    ]
+    _tabela_pdf(
+        pdf,
+        &quot;Substâncias custodiadas no cofre&quot;,
+        [&quot;ID&quot;, &quot;Toxina&quot;, &quot;Classe&quot;, &quot;Compartimento&quot;, &quot;Estoque&quot;, &quot;Estado&quot;],
+        tox_linhas,
+    )
+
+    # --- 7. Cadeia de Custódia ---
+    _secao_pdf(pdf, 7, &quot;Cadeia de Custódia&quot;)
+    custodia = pd.DataFrame(
+        [
+            {&quot;lote&quot;: &quot;TOX-0006/2026&quot;, &quot;toxina&quot;: &quot;Toxina Botulínica Tipo A&quot;,
+             &quot;de&quot;: &quot;Compartimento A-04&quot;, &quot;para&quot;: &quot;Laboratório Central&quot;,
+             &quot;responsavel&quot;: &quot;Diretor de Pesquisa&quot;, &quot;data_hora&quot;: &quot;2026-08-14 09:32&quot;},
+            {&quot;lote&quot;: &quot;TOX-0001/2026&quot;, &quot;toxina&quot;: &quot;Ricina&quot;,
+             &quot;de&quot;: &quot;Compartimento A-01&quot;, &quot;para&quot;: &quot;Sala de Análises&quot;,
+             &quot;responsavel&quot;: &quot;Diretor de Toxicologia&quot;, &quot;data_hora&quot;: &quot;2026-08-15 14:05&quot;},
+            {&quot;lote&quot;: &quot;TOX-0004/2026&quot;, &quot;toxina&quot;: &quot;Microcistina-LR&quot;,
+             &quot;de&quot;: &quot;Compartimento B-01&quot;, &quot;para&quot;: &quot;Incinerador controlado&quot;,
+             &quot;responsavel&quot;: &quot;Ministro do Meio Ambiente&quot;, &quot;data_hora&quot;: &quot;2026-09-02 10:12&quot;},
+        ]
+    )
+    custodia_linhas = [
+        (r[&quot;lote&quot;], r[&quot;toxina&quot;], r[&quot;de&quot;], r[&quot;para&quot;], r[&quot;responsavel&quot;], r[&quot;data_hora&quot;])
+        for _, r in custodia.iterrows()
+    ]
+    _tabela_pdf(
+        pdf,
+        &quot;Movimentações de substâncias (exemplo)&quot;,
+        [&quot;Lote&quot;, &quot;Toxina&quot;, &quot;De&quot;, &quot;Para&quot;, &quot;Responsável&quot;, &quot;Data / Hora&quot;],
+        custodia_linhas,
+    )
+
+    return bytes(pdf.output())
+
+
+def recortar_centro_rosto(img_path):
+    &quot;&quot;&quot;Corta a área central focando no rosto.&quot;&quot;&quot;
+    try:
+        with Image.open(img_path) as img:
+            w, h = img.size
+            left = int(w * 0.20)
+            top = int(h * 0.05)
+            right = int(w * 0.80)
+            bottom = int(h * 0.85)
+            crop_img = img.crop((left, top, right, bottom))
+            crop_img.save(img_path)
+    except Exception as e:
+        registrar_erro(&quot;IMAGEM&quot;, &quot;Processamento de Imagem&quot;, str(e))
+
+
+_DETECTOR_MTCNN = None
+
+
+def _detector_mtcnn():
+    global _DETECTOR_MTCNN
+    if _DETECTOR_MTCNN is None:
+        from mtcnn import MTCNN
+
+        _DETECTOR_MTCNN = MTCNN()
+    return _DETECTOR_MTCNN
+
+
+def _imgs_bytes_para_numpy(frames_bytes):
+    &quot;&quot;&quot;Converte uma lista de bytes (JPEG) em imagens RGB (numpy).&quot;&quot;&quot;
+    imgs = []
+    for b in frames_bytes:
+        arr = cv2.imdecode(np.frombuffer(b, np.uint8), cv2.IMREAD_COLOR)
+        if arr is not None:
+            imgs.append(cv2.cvtColor(arr, cv2.COLOR_BGR2RGB))
+    return imgs
+
+
+def _regiao_uniao(a, b):
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    x1 = min(ax, bx)
+    y1 = min(ay, by)
+    x2 = max(ax + aw, bx + bw)
+    y2 = max(ay + ah, by + bh)
+    return x1, y1, x2, y2
+
+
+# ---------- Liveness V2 — anti-spoofing reforçado ----------
+LIMIAR_MOVIMENTO = 0.015
+LIMIAR_N_COMPOS = 4
+LIMIAR_PARALAXE = 0.05
+LIMIAR_PISCADA = 0.60  # abertura do olho cai abaixo de 60% do baseline = piscada
+JANELA_MINIMA_S = 2.0
+LIMIAR_TELA_FFT = 12.0
+
+
+def _regiao_uniao(a, b):
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    x1 = min(ax, bx)
+    y1 = min(ay, by)
+    x2 = max(ax + aw, bx + bw)
+    y2 = max(ay + ah, by + bh)
+    return x1, y1, x2, y2
+
+
+_DLIB_DETECTOR = None
+_DLIB_PREDICTOR = None
+
+
+def _carregar_preditor_dlib():
+    &quot;&quot;&quot;Carrega o detector/predictor de 68 landmarks do dlib (uma vez).&quot;&quot;&quot;
+    global _DLIB_DETECTOR, _DLIB_PREDICTOR
+    if _DLIB_PREDICTOR is not None:
+        return _DLIB_PREDICTOR
+    import dlib
+    from site import getsitepackages, getusersitepackages
+
+    candidato = None
+    for raiz in getsitepackages() + [getusersitepackages()]:
+        achado = glob.glob(
+            os.path.join(
+                raiz, &quot;**&quot;, &quot;shape_predictor_68_face_landmarks.dat&quot;
+            ),
+            recursive=True,
+        )
+        if achado:
+            candidato = achado[0]
+            break
+    if not candidato:
+        raise FileNotFoundError(
+            &quot;shape_predictor_68_face_landmarks.dat não encontrado.&quot;
+        )
+    _DLIB_DETECTOR = dlib.get_frontal_face_detector()
+    _DLIB_PREDICTOR = dlib.shape_predictor(candidato)
+    return _DLIB_PREDICTOR
+
+
+def _ear_dos_olhos(cinza):
+    &quot;&quot;&quot;EAR (Eye Aspect Ratio) por olho via dlib 68 landmarks.
+    Olho aberto ~0.25-0.33; piscado &lt;-0.12. Retorna (esq, dir) ou None.&quot;&quot;&quot;
+    try:
+        pred = _carregar_preditor_dlib()
+    except Exception as e:
+        registrar_erro(&quot;BIOMETRIA&quot;, &quot;Dlib Landmarks&quot;, str(e))
+        return None
+    faces = _DLIB_DETECTOR(cinza)
+    if not faces:
+        return None
+    face = max(faces, key=lambda r: r.width() * r.height())
+    try:
+        shape = pred(cinza, face)
+    except Exception:
+        return None
+
+    def ear(indices):
+        pts = [
+            np.array((shape.part(i).x, shape.part(i).y)) for i in indices
+        ]
+        return (
+            np.linalg.norm(pts[1] - pts[5]) + np.linalg.norm(pts[2] - pts[4])
+        ) / (2.0 * np.linalg.norm(pts[0] - pts[3]) + 1e-6)
+
+    return ear([36, 37, 38, 39, 40, 41]), ear([42, 43, 44, 45, 46, 47])
+
+
+def _piscada_detectada(ears_por_quadro):
+    &quot;&quot;&quot;True se algum olho piscou (EAR caiu abaixo de 60% do baseline aberto).
+    None se não houve landmarks suficientes (inconclusivo).&quot;&quot;&quot;
+    validos = [e for e in ears_por_quadro if e is not None]
+    if not validos:
+        return None
+    esq = [e[0] for e in validos]
+    dir_ = [e[1] for e in validos]
+    for serie in (esq, dir_):
+        if len(serie) &lt; 2:
+            continue
+        baseline = max(serie)
+        if baseline &lt; 0.20:
+            continue
+        if min(serie) &lt; LIMIAR_PISCADA * baseline:
+            return True
+    return False
+
+
+def _variacao_paralaxe(metas):
+    &quot;&quot;&quot;Variação das proporções geométricas (nariz↔olhos↔boca) ao longo dos
+    quadros. Rosto real girando muda essas proporções; foto plana deslizando
+    mantém as proporções constantes (pura translação 2D).&quot;&quot;&quot;
+    of_x, dy_boca = [], []
+    for meta in metas:
+        kp = meta[&quot;kp&quot;]
+        le = np.array(kp[&quot;left_eye&quot;], dtype=np.float64)
+        re = np.array(kp[&quot;right_eye&quot;], dtype=np.float64)
+        nose = np.array(kp[&quot;nose&quot;], dtype=np.float64)
+        ml = np.array(kp[&quot;mouth_left&quot;], dtype=np.float64)
+        mr = np.array(kp[&quot;mouth_right&quot;], dtype=np.float64)
+        eye_w = float(np.linalg.norm(re - le))
+        if eye_w &lt; 10:
+            continue
+        centro_x = 0.5 * (le[0] + re[0])
+        centro_y = 0.5 * (le[1] + re[1])
+        of_x.append((nose[0] - centro_x) / eye_w)
+        dy_boca.append((0.5 * (ml[1] + mr[1]) - centro_y) / eye_w)
+    if not of_x:
+        return 0.0
+    return float(np.std(of_x) + np.std(dy_boca))
+
+
+def _detectar_tela(cinza, face_box):
+    &quot;&quot;&quot;Força de padrão periódico de alta frequência (Moiré/grade de tela) no
+    recorte do rosto via FFT. Valor alto indica imagem vinda de uma tela.&quot;&quot;&quot;
+    bx, by, bw, bh = face_box
+    h, w = cinza.shape[:2]
+    bx1, by1 = max(bx, 0), max(by, 0)
+    bx2, by2 = min(bx + bw, w), min(by + bh, h)
+    crop = cinza[by1:by2, bx1:bx2]
+    if crop.size &lt; 32 * 32:
+        return 0.0
+    g = cv2.resize(crop, (256, 256)).astype(np.float32)
+    janela_hann = np.outer(np.hanning(256), np.hanning(256)).astype(
+        np.float32
+    )
+    g = g * janela_hann
+    mag = np.abs(np.fft.fftshift(np.fft.fft2(g)))
+    H, W = mag.shape
+    yy, xx = np.mgrid[0:H, 0:W]
+    d = np.sqrt((yy - H // 2) ** 2 + (xx - W // 2) ** 2)
+    raio_max = 0.47 * H
+    anulo = (d &gt; 0.55 * raio_max) &amp; (d &lt;= raio_max)
+    if anulo.sum() &lt; 64:
+        return 0.0
+    an = mag[anulo]
+    media = float(an.mean())
+    if media &lt;= 1e-9:
+        return 0.0
+    return float(an.max() / media)
+
+
+def avaliar_liveness(frames):
+    &quot;&quot;&quot;V2: 6 barreiras anti-fraude. `frames` = [(bytes_do_quadro, timestamp)].
+
+    Retorna (aprovado, motivo, detalhes, idx_melhor_quadro).
+    Barreiras: janela &gt;= 2s; movimento; padrão orgânico temporal;
+    variação geométrica (parallax 3D); &gt;= 1 piscada; ausência de tela (Moiré).
+    &quot;&quot;&quot;
+    imgs, ts = [], []
+    for b, t in frames:
+        arr = cv2.imdecode(np.frombuffer(b, np.uint8), cv2.IMREAD_COLOR)
+        if arr is not None:
+            imgs.append(cv2.cvtColor(arr, cv2.COLOR_BGR2RGB))
+            ts.append(t)
+
+    detalhes = {&quot;quadros_capturados&quot;: len(imgs)}
+    if len(imgs) &lt; 3:
+        return False, &quot;É necessário capturar ao menos 3 quadros.&quot;, detalhes, 0
+
+    if len(ts) &gt;= 2 and (ts[-1] - ts[0]) &lt; JANELA_MINIMA_S:
+        return (
+            False,
+            &quot;Captura rápida demais (menos de 2s entre o 1º e o último quadro) &quot;
+            &quot;— típico de rajada de fotos, sem interação real.&quot;,
+            detalhes,
+            0,
+        )
+
+    detector = _detector_mtcnn()
+    grays, boxes, metas = [], [], []
+    for arr in imgs:
+        hgt, wdt = arr.shape[:2]
+        escala = 360.0 / float(hgt)
+        pequeno = cv2.resize(arr, (int(wdt * escala), 360))
+        cinza = cv2.cvtColor(pequeno, cv2.COLOR_RGB2GRAY)
+        faces = detector.detect_faces(pequeno)
+        meta = None
+        if faces:
+            face = max(faces, key=lambda f: f[&quot;box&quot;][2] * f[&quot;box&quot;][3])
+            x, y, w, h2 = face[&quot;box&quot;]
+            if w &gt;= 30 and h2 &gt;= 30:
+                meta = {&quot;box&quot;: tuple(face[&quot;box&quot;]), &quot;kp&quot;: face[&quot;keypoints&quot;]}
+        grays.append(cinza)
+        metas.append(meta)
+        boxes.append(meta[&quot;box&quot;] if meta else None)
+
+    presentes = [i for i, m in enumerate(metas) if m is not None]
+    n_req = max(2, int(round(len(imgs) * 0.6)))
+    detalhes[&quot;rostos_detectados&quot;] = len(presentes)
+    if len(presentes) &lt; n_req:
+        return (
+            False,
+            &quot;Rosto não detectado em quadros suficientes (imagem borrada, &quot;
+            &quot;escura ou fora do círculo).&quot;,
+            detalhes,
+            0,
+        )
+
+    diffs = []
+    for k in range(len(presentes) - 1):
+        a, b = presentes[k], presentes[k + 1]
+        x1, y1, x2, y2 = _regiao_uniao(boxes[a], boxes[b])
+        mov = (
+            float(np.mean(cv2.absdiff(grays[a], grays[b])[y1:y2, x1:x2]))
+            / 255.0
+        )
+        diffs.append(mov)
+    movimento_max = max(diffs)
+    detalhes[&quot;movimento_máximo&quot;] = f&quot;{movimento_max * 100:.2f}%&quot;
+
+    if movimento_max &lt; LIMIAR_MOVIMENTO:
+        return (
+            False,
+            &quot;**Movimento insuficiente do rosto** entre os quadros — típico de &quot;
+            &quot;foto ou tela parada exibida à câmera. Repita o mini vídeo movendo &quot;
+            &quot;a cabeça e piscando os olhos a cada captura.&quot;,
+            detalhes,
+            0,
+        )
+
+    regioes = []
+    for idx in presentes:
+        bx, by, bw, bh = boxes[idx]
+        crop = grays[idx][by : by + bh, bx : bx + bw]
+        regioes.append(cv2.resize(crop, (80, 80)))
+    pilha = np.stack(regioes).astype(np.float32)
+    var_map = pilha.var(axis=0)
+    q75 = np.percentile(var_map, 75)
+    alto = (var_map &gt;= q75).astype(np.uint8) if q75 &gt; 0 else None
+    n_comps = 0
+    if alto is not None:
+        n_comps = cv2.connectedComponents(alto, connectivity=8)[0]
+    detalhes[&quot;regiões_de_variação&quot;] = int(n_comps)
+    if n_comps &lt; LIMIAR_N_COMPOS:
+        detalhes[&quot;padrão_de_movimento&quot;] = &quot;Rígido / uniforme (possível foto)&quot;
+        return (
+            False,
+            &quot;**Movimento rígido e plano** — a imagem se moveu como uma única &quot;
+            &quot;peça (foto ou tela deslizando), sem o padrão orgânico de um rosto &quot;
+            &quot;real. Repita girando a cabeça de verdade (olhe para os lados) e &quot;
+            &quot;pisque.&quot;,
+            detalhes,
+            0,
+        )
+
+    paralaxe = (
+        _variacao_paralaxe([metas[i] for i in presentes]) if presentes else 0.0
+    )
+    detalhes[&quot;variação_geométrica_(parallax)&quot;] = f&quot;{paralaxe:.3f}&quot;
+    if paralaxe &lt; LIMIAR_PARALAXE:
+        detalhes[&quot;padrão_de_movimento&quot;] = &quot;Rígido / uniforme (possível foto)&quot;
+        return (
+            False,
+            &quot;**Sem variação 3D da face** — as proporções entre nariz/olhos/&quot;
+            &quot;boca não mudaram durante o movimento (translação rígida, típica &quot;
+            &quot;de foto deslizando). Gire a cabeça para os lados.&quot;,
+            detalhes,
+            0,
+        )
+
+    ears_por_quadro = []
+    for idx in presentes:
+        ears_por_quadro.append(_ear_dos_olhos(grays[idx]))
+    piscou = _piscada_detectada(ears_por_quadro)
+    detalhes[&quot;piscada_detectada&quot;] = {
+        True: &quot;Sim&quot;,
+        False: &quot;Não&quot;,
+        None: &quot;Inconclusivo&quot;,
+    }[piscou]
+    if piscou is None:
+        return (
+            False,
+            &quot;**Não foi possível analisar os olhos** — aproxime o rosto do &quot;
+            &quot;círculo, olhe de frente e em boa iluminação para repetir.&quot;,
+            detalhes,
+            0,
+        )
+    if not piscou:
+        return (
+            False,
+            &quot;**Nenhuma piscada detectada** — é necessário **piscar** (fechar e &quot;
+            &quot;abrir os olhos) durante as capturas. Fotos e telas nunca piscam.&quot;,
+            detalhes,
+            0,
+        )
+
+    melhor = max(presentes, key=lambda i: (boxes[i][2] * boxes[i][3]))
+    sinal_tela = _detectar_tela(grays[melhor], boxes[melhor])
+    detalhes[&quot;sinal_de_tela_(moiré)&quot;] = f&quot;{sinal_tela:.1f}&quot;
+    if sinal_tela &gt;= LIMIAR_TELA_FFT:
+        return (
+            False,
+            &quot;**Padrão de tela detectado (Moiré)** — a imagem parece ter sido &quot;
+            &quot;exibida em um monitor/celular diante da câmera. Aproxime-se &quot;
+            &quot;iluminando o rosto diretamente e evite telas.&quot;,
+            detalhes,
+            melhor,
+        )
+
+    detalhes[&quot;padrão_de_movimento&quot;] = &quot;Orgânico (faces reais)&quot;
+    return True, &quot;Movimento 3D do rosto + piscada detectados.&quot;, detalhes, melhor
+
+
+def _melhor_match_biometrico(temp_test_path):
+    &quot;&quot;&quot;Busca o colaborador cadastrado mais próximo (VGG-Face / cosine).&quot;&quot;&quot;
+    conn = sqlite3.connect(DB_FILE)
+    cur = conn.cursor()
+    cur.execute(&quot;SELECT id, nome, foto_path FROM colaboradores&quot;)
+    cadastrados = cur.fetchall()
+    conn.close()
+
+    melhor_candidato = None
+    menor_distancia = 1.0
+    for cid, cnome, cpath in cadastrados:
+        if not os.path.exists(cpath):
+            continue
+        try:
+            res = DeepFace.verify(
+                img1_path=temp_test_path,
+                img2_path=cpath,
+                model_name=&quot;VGG-Face&quot;,
+                detector_backend=&quot;skip&quot;,
+                distance_metric=&quot;cosine&quot;,
+                enforce_detection=False,
+            )
+            distancia = res.get(&quot;distance&quot;, 1.0)
+            if distancia &lt; menor_distancia:
+                menor_distancia = distancia
+                melhor_candidato = (cid, cnome)
+        except Exception as e:
+            registrar_erro(
+                &quot;BIOMETRIA&quot;, f&quot;Validação Biométrica ({cnome})&quot;, str(e)
+            )
+    return melhor_candidato, menor_distancia
+
+
+def _conceder_ou_negar(
+    colab_id, colab_nome, menor_distancia, nivel_requerido, area_requerida
+):
+    &quot;&quot;&quot;Decisão final pós-reconhecimento: nível, login, logs e alertas.&quot;&quot;&quot;
+    conn = sqlite3.connect(DB_FILE)
+    cur = conn.cursor()
+    cur.execute(
+        &quot;SELECT nivel_acesso FROM colaboradores WHERE id = ?&quot;, (colab_id,)
+    )
+    linha_nivel = cur.fetchone()
+    conn.close()
+    nivel_colab = int(linha_nivel[0]) if linha_nivel else 1
+
+    if nivel_colab &gt;= nivel_requerido:
+        st.success(
+            f&quot;✅ **ACESSO AUTORIZADO!**\n\nBem-vindo(a), **{colab_nome}**! &quot;
+            f&quot;(Distância: {menor_distancia:.3f})\nCompartimento liberado: &quot;
+            f&quot;**{area_requerida}**&quot;
+        )
+        registrar_log(colab_nome, area_requerida, &quot;PERMITIDO&quot;)
+        st.session_state.pop(&quot;sessao_expirada&quot;, None)
+        st.session_state[&quot;usuario_logado&quot;] = {
+            &quot;id&quot;: colab_id,
+            &quot;nome&quot;: colab_nome,
+            &quot;nivel_acesso&quot;: nivel_colab,
+            &quot;login_ts&quot;: time.time(),
+        }
+        st.toast(
+            &quot;🔓 Sessão iniciada. Compartimentos liberados conforme o nível do colaborador.&quot;,
+            icon=&quot;🔓&quot;,
+        )
+        return True
+
+    st.error(
+        f&quot;🚫 **ACESSO NEGADO!**\n\nColaborador identificado (**{colab_nome}**), &quot;
+        f&quot;porém com nível `{nivel_colab}` (não possui o nível `{nivel_requerido}` &quot;
+        f&quot;exigido para o compartimento `{area_requerida}`).&quot;
+    )
+    registrar_log(
+        colab_nome,
+        area_requerida,
+        &quot;NEGADO&quot;,
+        {&quot;motivo&quot;: &quot;Nível insuficiente&quot;, &quot;nivel_colab&quot;: nivel_colab},
+    )
+    _registrar_e_verificar_bloqueio(
+        area_requerida,
+        f&quot;Acesso indevido: {colab_nome} (nível {nivel_colab}) tentou o &quot;
+        f&quot;compartimento de nível {nivel_requerido}.&quot;,
+        origem=&quot;foto&quot;,
+    )
+    enviar_alerta_seguranca(
+        area_requerida,
+        f&quot;Colaborador {colab_nome} tentou acessar o compartimento de nível &quot;
+        f&quot;{nivel_requerido} sem permissão (possui nível {nivel_colab}).&quot;,
+    )
+    return False
+
+
+# ---------- Política de bloqulo temporário por compartimento ----------
+JANELA_FRAUDE_S = 10 * 60      # janela de contagem de tentativas (10 min)
+DURACAO_BLOQUEIO_S = 15 * 60   # bloqueio após limite (15 min)
+MAX_TENTATIVAS = 3             # tentativas de fraude/negadas p/ disparar bloqueio
+
+
+def _registrar_tentativa_fraude(compartimento, motivo, detalhes=None,
+                                origem=&quot;mini_video&quot;):
+    &quot;&quot;&quot;Registra uma tentativa de fraude/negada e retorna o nº na janela.&quot;&quot;&quot;
+    conn = sqlite3.connect(DB_FILE)
+    cur = conn.cursor()
+    dh = datetime.now().strftime(&quot;%Y-%m-%d %H:%M:%S&quot;)
+    cur.execute(
+        &quot;INSERT INTO tentativas_seguranca &quot;
+        &quot;(compartimento, data_hora, motivo, detalhes, origem) &quot;
+        &quot;VALUES (?, ?, ?, ?, ?)&quot;,
+        (
+            compartimento,
+            dh,
+            motivo,
+            json.dumps(detalhes or {}, ensure_ascii=False),
+            origem,
+        ),
+    )
+    conn.commit()
+    desde = (datetime.now() - timedelta(seconds=JANELA_FRAUDE_S)).strftime(
+        &quot;%Y-%m-%d %H:%M:%S&quot;
+    )
+    cur.execute(
+        &quot;SELECT COUNT(*) FROM tentativas_seguranca &quot;
+        &quot;WHERE compartimento = ? AND data_hora &gt;= ?&quot;,
+        (compartimento, desde),
+    )
+    n = cur.fetchone()[0]
+    conn.close()
+    return int(n)
+
+
+def _bloqueio_ativo(compartimento):
+    &quot;&quot;&quot;Retorna (bloqueado, minutos_restantes) para o compartimento.&quot;&quot;&quot;
+    conn = sqlite3.connect(DB_FILE)
+    cur = conn.cursor()
+    desde = (datetime.now() - timedelta(seconds=JANELA_FRAUDE_S)).strftime(
+        &quot;%Y-%m-%d %H:%M:%S&quot;
+    )
+    cur.execute(
+        &quot;SELECT COUNT(*) FROM tentativas_seguranca &quot;
+        &quot;WHERE compartimento = ? AND data_hora &gt;= ?&quot;,
+        (compartimento, desde),
+    )
+    n = cur.fetchone()[0]
+    encerra_em = None
+    if n &gt;= MAX_TENTATIVAS:
+        cur.execute(
+            &quot;SELECT data_hora FROM tentativas_seguranca &quot;
+            &quot;WHERE compartimento = ? AND data_hora &gt;= ? ORDER BY id DESC LIMIT 1&quot;,
+            (compartimento, desde),
+        )
+        ultima = cur.fetchone()
+        if ultima:
+            t_ultima = datetime.strptime(ultima[0], &quot;%Y-%m-%d %H:%M:%S&quot;)
+            encerra_em = t_ultima + timedelta(seconds=DURACAO_BLOQUEIO_S)
+    conn.close()
+    if encerra_em is None:
+        return False, 0
+    restantes = (encerra_em - datetime.now()).total_seconds()
+    if restantes &lt;= 0:
+        return False, 0
+    minutos = int(restantes // 60) + (1 if restantes % 60 else 0)
+    return True, minutos
+
+
+def _tentativas_recentes(compartimento, limite=8):
+    &quot;&quot;&quot;Lista das últimas tentativas de fraude/negadas do compartimento.&quot;&quot;&quot;
+    conn = sqlite3.connect(DB_FILE)
+    cur = conn.cursor()
+    cur.execute(
+        &quot;SELECT data_hora, motivo, origem FROM tentativas_seguranca &quot;
+        &quot;WHERE compartimento = ? ORDER BY id DESC LIMIT ?&quot;,
+        (compartimento, limite),
+    )
+    linhas = [
+        {&quot;Data/Hora&quot;: dh, &quot;Motivo&quot;: m, &quot;Origem&quot;: o}
+        for dh, m, o in cur.fetchall()
+    ]
+    conn.close()
+    return linhas
+
+
+def _registrar_e_verificar_bloqueio(compartimento, motivo, detalhes=None,
+                                    origem=&quot;mini_video&quot;):
+    &quot;&quot;&quot;Registra a tentativa; se atingiu o limite, dispara alerta e bloqueia.&quot;&quot;&quot;
+    n = _registrar_tentativa_fraude(
+        compartimento, motivo, detalhes, origem
+    )
+    bloq, minutos = _bloqueio_ativo(compartimento)
+    if bloq and st.session_state.get(&quot;alertou_bloqueio&quot;) != compartimento:
+        st.session_state[&quot;alertou_bloqueio&quot;] = compartimento
+        enviar_alerta_seguranca(
+            compartimento,
+            f&quot;⛔ **BLOQUEIO TEMPORÁRIO ATIVADO** no compartimento &quot;
+            f&quot;{compartimento} após {n} tentativas de fraude/acesso indevido. &quot;
+            f&quot;Validação suspensa por {minutos} min. Motivo: {motivo}&quot;,
+        )
+    return bloq, minutos
+
+
+def _render_mini_video(nivel_requerido, area_requerida):
+    &quot;&quot;&quot;UI do mini vídeo anti-fraude (liveness) + validação biométrica.&quot;&quot;&quot;
+    st.info(
+        &quot;🎥 **Mini vídeo anti-fraude.** Posicione o rosto no círculo e capture &quot;
+        &quot;**de 4 a 8 quadros**, **girando a cabeça** para os lados/cima-baixo e &quot;
+        &quot;**piscando** durante as capturas (as fotos nunca piscam). O sistema &quot;
+        &quot;exige &gt;2s de captura, movimento orgânico 3D, ao menos uma piscada e &quot;
+        &quot;ausência de tela (Moiré) — **fotos na tela do celular serão bloqueadas**.&quot;
+    )
+
+    if &quot;live_frames&quot; not in st.session_state:
+        st.session_state[&quot;live_frames&quot;] = []
+
+    frame = st.camera_input(
+        &quot;🎥 Capture os quadros do mini vídeo (mova o rosto entre as capturas)&quot;,
+        key=&quot;live_cam_webcam&quot;,
+    )
+
+    if frame is not None:
+        novo = frame.getvalue()
+        fichas = st.session_state[&quot;live_frames&quot;]
+        if len(fichas) &lt; 8 and (
+            not fichas
+            or hashlib.sha1(novo).hexdigest()
+            != hashlib.sha1(fichas[-1][0]).hexdigest()
+        ):
+            fichas.append((novo, time.time()))
+            st.toast(
+                f&quot;📸 Quadro {len(fichas)} capturado — mova a cabeça e capture mais!&quot;,
+                icon=&quot;🎥&quot;,
+            )
+
+    n = len(st.session_state[&quot;live_frames&quot;])
+    c1, c2 = st.columns([1, 1])
+    c1.metric(&quot;Quadros capturados&quot;, f&quot;{n}/8&quot;)
+    if c2.button(&quot;🧹 Limpar quadros&quot;, use_container_width=True):
+        st.session_state[&quot;live_frames&quot;] = []
+        st.session_state[&quot;alertou_bloqueio&quot;] = None
+        st.rerun()
+
+    if st.session_state[&quot;live_frames&quot;]:
+        thumbs = [
+            Image.open(io.BytesIO(b)).copy()
+            for b, _ in st.session_state[&quot;live_frames&quot;]
+        ]
+        thumbs = [t.resize((90, int(90 * t.height / t.width))) for t in thumbs]
+        st.image(
+            thumbs,
+            caption=[f&quot;Q{i+1}&quot; for i in range(len(thumbs))],
+            width=90,
+        )
+
+    if st.button(
+        &quot;🔍 Analisar Mini Vídeo e Validar Acesso&quot;,
+        type=&quot;primary&quot;,
+        disabled=(n &lt; 3),
+    ):
+        aprovado, motivo, detalhes, idx_melhor = avaliar_liveness(
+            st.session_state[&quot;live_frames&quot;]
+        )
+        if not aprovado:
+            st.error(
+                f&quot;🚨 **ACESSO NEGADO — FRAUDE SUSPEITA!**\n\n{motivo}\n\n&quot;
+                f&quot;Detalhes: {detalhes}&quot;
+            )
+            registrar_log(
+                &quot;Desconhecido&quot;,
+                area_requerida,
+                &quot;NEGADO&quot;,
+                {&quot;motivo&quot;: motivo, **detalhes},
+            )
+            bloq, minutos = _registrar_e_verificar_bloqueio(
+                area_requerida,
+                f&quot;Mini vídeo bloqueado: {motivo}&quot;,
+                detalhes,
+                origem=&quot;mini_video&quot;,
+            )
+            if bloq:
+                st.error(
+                    f&quot;⛔ **BLOQUEIO TEMPORÁRIO ATIVADO** neste compartimento. &quot;
+                    f&quot;Nova validação permitida em até {minutos} min.&quot;
+                )
+            else:
+                enviar_alerta_seguranca(
+                    area_requerida,
+                    &quot;Tentativa de acesso bloqueada pelo mini vídeo anti-fraude: &quot;
+                    f&quot;{motivo}&quot;,
+                )
+            return
+
+        st.success(
+            f&quot;✅ **Liveness aprovado!** {motivo}\n\nDetalhes: {detalhes}&quot;
+        )
+
+        temp_test_path = &quot;temp_test.jpg&quot;
+        with open(temp_test_path, &quot;wb&quot;) as f:
+            f.write(st.session_state[&quot;live_frames&quot;][idx_melhor][0])
+        recortar_centro_rosto(temp_test_path)
+
+        try:
+            carregar_modelo_facial()
+            with st.spinner(&quot;Validando biometria facial no melhor quadro...&quot;):
+                melhor_candidato, menor_distancia = _melhor_match_biometrico(
+                    temp_test_path
+                )
+            if os.path.exists(temp_test_path):
+                os.remove(temp_test_path)
+
+            if melhor_candidato is not None and menor_distancia &lt;= 0.35:
+                colab_id, colab_nome = melhor_candidato
+                _conceder_ou_negar(
+                    colab_id,
+                    colab_nome,
+                    menor_distancia,
+                    nivel_requerido,
+                    area_requerida,
+                )
+            else:
+                st.error(
+                    f&quot;🚨 **ACESSO NEGADO!** Biometria não bateu com nenhum &quot;
+                    f&quot;cadastrado. (Menor distância: {menor_distancia:.3f})&quot;
+                )
+                registrar_log(
+                    &quot;Desconhecido&quot;,
+                    area_requerida,
+                    &quot;NEGADO&quot;,
+                    {&quot;motivo&quot;: &quot;Biometria não reconhecida (mini vídeo)&quot;},
+                )
+                _registrar_e_verificar_bloqueio(
+                    area_requerida,
+                    &quot;Biometria não reconhecida (mini vídeo).&quot;,
+                    origem=&quot;mini_video&quot;,
+                )
+                enviar_alerta_seguranca(
+                    area_requerida,
+                    &quot;Pessoa não identificada/desconhecida (mini vídeo).&quot;,
+                )
+        except Exception as e:
+            registrar_erro(&quot;GERAL&quot;, &quot;Validação de Acesso (Mini Vídeo)&quot;, str(e))
+            st.error(
+                f&quot;❌ Ocorreu um erro inesperado na validação. Veja a aba 🐞 &quot;
+                f&quot;Registro de Erros para ajuda. ({e})&quot;
+            )
+
+
+def registrar_log(nome, area, status, detalhes=None):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    dh = datetime.now().strftime(&quot;%Y-%m-%d %H:%M:%S&quot;)
+    cursor.execute(
+        &quot;INSERT INTO logs_acesso &quot;
+        &quot;(colaborador_nome, setor, data_hora, status, detalhes) &quot;
+        &quot;VALUES (?, ?, ?, ?, ?)&quot;,
+        (
+            nome,
+            area,
+            dh,
+            status,
+            json.dumps(detalhes, ensure_ascii=False) if detalhes else None,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def obter_ajuda_erro(tipo, mensagem):
+    &quot;&quot;&quot;Retorna (descricao, sugerida) amigáveis para o tipo/mensagem do erro.&quot;&quot;&quot;
+    m = (mensagem or &quot;&quot;).lower()
+    generica = (
+        &quot;Ocorreu um erro inesperado durante a operação.&quot;,
+        &quot;Verifique o texto técnico abaixo e, se persistir, revise a &quot;
+        &quot;configuração do sistema ou contate o suporte técnico.&quot;,
+    )
+
+    ajuda = {
+        &quot;EMAIL&quot;: [
+            (
+                (&quot;authenticationfailed&quot;, &quot;auth&quot;, &quot;535&quot;, &quot;invalid credentials&quot;,
+                 &quot;usernametoken&quot;),
+                &quot;As credenciais do e-mail remetente estão incorretas ou a &quot;
+                &quot;&#x27;Senha de App&#x27; não foi configurada para o Gmail.&quot;,
+                &quot;No Gmail: ative a verificação em 2 etapas e crie uma &quot;
+                &quot;&#x27;Senha de App&#x27; em https://myaccount.google.com/apppasswords. &quot;
+                &quot;Cole essa senha no campo &#x27;Senha de App&#x27; das configurações.&quot;,
+            ),
+            (
+                (&quot;errno -2&quot;, &quot;name or service not known&quot;, &quot;dns&quot;,
+                 &quot;getaddrinfo&quot;, &quot;temporarily unable&quot;, &quot;connection&quot;),
+                &quot;Não foi possível conectar ao servidor de e-mail (SMTP). &quot;
+                &quot;Provavelmente falta conexão com a internet.&quot;,
+                &quot;Verifique sua conexão com a internet. Se o problema &quot;
+                &quot;persistir, teste em outra rede.&quot;,
+            ),
+            (
+                (&quot;timed out&quot;, &quot;timeout&quot;, &quot;slow&quot;),
+                &quot;O servidor de e-mail demorou demais para responder (timeout).&quot;,
+                &quot;Tente novamente mais tarde. Verifique se o firewall/antivírus &quot;
+                &quot;não está bloqueando a porta SMTP (587).&quot;,
+            ),
+        ],
+        &quot;TWILIO&quot;: [
+            (
+                (&quot;401&quot;, &quot;unauthorized&quot;, &quot;authenticate&quot;, &quot;credentials&quot;),
+                &quot;As credenciais da Twilio (Account SID / Auth Token) estão &quot;
+                &quot;inválidas.&quot;,
+                &quot;Revise o Account SID e o Auth Token em &quot;
+                &quot;https://console.twilio.com e atualize as configurações.&quot;,
+            ),
+            (
+                (&quot;errno -2&quot;, &quot;name or service not known&quot;, &quot;dns&quot;,
+                 &quot;getaddrinfo&quot;, &quot;temporarily unable&quot;, &quot;connection&quot;),
+                &quot;Não foi possível conectar à API da Twilio. Provavelmente &quot;
+                &quot;falta conexão com a internet.&quot;,
+                &quot;Verifique sua conexão com a internet.&quot;,
+            ),
+            (
+                (&quot;timed out&quot;, &quot;timeout&quot;, &quot;slow&quot;),
+                &quot;A API da Twilio demorou demais para responder (timeout).&quot;,
+                &quot;Tente novamente mais tarde.&quot;,
+            ),
+        ],
+        &quot;IMAGEM&quot;: [
+            (
+                (&quot;cannot identify&quot;, &quot;not an image&quot;, &quot;cannot open&quot;,
+                 &quot;unidentified image&quot;),
+                &quot;O arquivo enviado não é uma imagem válida ou está corrompido &quot;
+                &quot;(uso do formato JPG/PNG esperado).&quot;,
+                &quot;Utilize uma imagem JPG ou PNG válida e nítida.&quot;,
+            ),
+        ],
+        &quot;BIOMETRIA&quot;: [
+            (
+                (&quot;verify&quot;, &quot;no face&quot;, &quot;face&quot;, &quot;detect&quot;, &quot;enforce_detection&quot;),
+                &quot;Não foi possível processar a identificação facial da imagem &quot;
+                &quot;(rosto pouco nítido ou ausente).&quot;,
+                &quot;Centralize o rosto na câmera com boa iluminação e tente &quot;
+                &quot;novamente.&quot;,
+            ),
+        ],
+        &quot;BANCO&quot;: [
+            (
+                (&quot;no such table&quot;, &quot;database is locked&quot;, &quot;operationalerror&quot;,
+                 &quot;unable to open database&quot;),
+                &quot;Problema ao acessar o banco de dados local &quot;
+                &quot;(controle_acesso.db).&quot;,
+                &quot;Verifique se o arquivo existe e não está bloqueado por outro &quot;
+                &quot;processo. Reinicie a aplicação se necessário.&quot;,
+            ),
+        ],
+    }
+
+    for tipo_chave, regras in ajuda.items():
+        if tipo != tipo_chave:
+            continue
+        for (padroes, desc, sug) in regras:
+            if any(p in m for p in padroes):
+                return desc, sug
+    return generica
+
+
+def registrar_erro(tipo, modulo, mensagem):
+    &quot;&quot;&quot;Registra um erro na tabela logs_erros com ajuda amigável associada.&quot;&quot;&quot;
+    try:
+        descricao, sugerida = obter_ajuda_erro(tipo, mensagem)
+        dh = datetime.now().strftime(&quot;%Y-%m-%d %H:%M:%S&quot;)
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute(
+            &quot;INSERT INTO logs_erros (data_hora, tipo, modulo, mensagem, &quot;
+            &quot;descricao, sugerida) VALUES (?, ?, ?, ?, ?, ?)&quot;,
+            (dh, tipo, modulo, mensagem, descricao, sugerida),
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+def limpar_logs_erros():
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute(&quot;DELETE FROM logs_erros&quot;)
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+def enviar_alerta_seguranca(area, motivo):
+    &quot;&quot;&quot;Envia alertas por E-mail e WhatsApp/SMS se os dados estiverem preenchidos.&quot;&quot;&quot;
+    dh = datetime.now().strftime(&quot;%d/%m/%Y às %H:%M:%S&quot;)
+
+    # Recupera credenciais da Session State
+    email_ativo = st.session_state.get(&quot;cfg_email_ativo&quot;, False)
+    email_remetente = st.session_state.get(&quot;cfg_email_remetente&quot;, &quot;&quot;).strip()
+    email_senha = st.session_state.get(&quot;cfg_email_senha&quot;, &quot;&quot;).strip()
+    email_destinatario = st.session_state.get(
+        &quot;cfg_email_destinatario&quot;, &quot;&quot;
+    ).strip()
+
+    twilio_ativo = st.session_state.get(&quot;cfg_twilio_ativo&quot;, False)
+    twilio_sid = st.session_state.get(&quot;cfg_twilio_sid&quot;, &quot;&quot;).strip()
+    twilio_token = st.session_state.get(&quot;cfg_twilio_token&quot;, &quot;&quot;).strip()
+    twilio_de = st.session_state.get(&quot;cfg_twilio_de&quot;, &quot;&quot;).strip()
+    twilio_para = st.session_state.get(&quot;cfg_twilio_para&quot;, &quot;&quot;).strip()
+
+    provedor = st.session_state.get(&quot;cfg_email_provedor&quot;, &quot;Gmail&quot;)
+    smtp_host = st.session_state.get(&quot;cfg_email_smtp_host&quot;, &quot;&quot;).strip()
+    smtp_port = st.session_state.get(&quot;cfg_email_smtp_port&quot;, &quot;&quot;).strip()
+    smtp_login = st.session_state.get(&quot;cfg_email_smtp_login&quot;, &quot;&quot;).strip()
+    host, port_padrao = PRESETS_SMTP.get(provedor, PRESETS_SMTP[&quot;Gmail&quot;])
+    if not smtp_host:
+        smtp_host = host
+    if not smtp_port:
+        smtp_port = port_padrao
+    if not smtp_login:
+        smtp_login = email_remetente
+
+    # 1. Disparo por E-mail (SMTP Gmail/Outlook/Brevo)
+    if (
+        email_ativo
+        and email_remetente
+        and email_senha
+        and email_destinatario
+    ):
+        try:
+            corpo_email = f&quot;ALERTA DE SEGURANÇA - FALHA DE ACESSO AO COFRE\n\nCompartimento do Cofre: {area}\nData/Hora: {dh}\nDetalhes: {motivo}&quot;
+            msg = MIMEText(corpo_email)
+            msg[&quot;Subject&quot;] = f&quot;🚨 ALERTA: Falha de Acesso ao compartimento do cofre {area}&quot;
+            msg[&quot;From&quot;] = email_remetente
+            msg[&quot;To&quot;] = email_destinatario
+
+            server = smtplib.SMTP(smtp_host, int(smtp_port))
+            server.starttls()
+            server.login(smtp_login, email_senha)
+            server.sendmail(
+                email_remetente, [email_destinatario], msg.as_string()
+            )
+            server.quit()
+            st.toast(&quot;📩 Alerta enviado por E-mail!&quot;, icon=&quot;📧&quot;)
+        except Exception as e:
+            registrar_erro(&quot;EMAIL&quot;, &quot;Alerta E-mail&quot;, str(e))
+            msg_erro = str(e).lower()
+            if &quot;535&quot; in msg_erro or &quot;badcredentials&quot; in msg_erro:
+                if provedor == &quot;Brevo&quot;:
+                    dica = (
+                        &quot;\n\n💡 **Credenciais inválidas**: no **Brevo**, confira se &quot;
+                        &quot;copiou a **SMTP key** no campo *Senha de App*, se o **SMTP &quot;
+                        &quot;Login** está preenchido e se o **Remetente** foi confirmado &quot;
+                        &quot;(e-mail de verificação enviado pelo Brevo).&quot;
+                    )
+                elif provedor == &quot;Outlook&quot;:
+                    dica = (
+                        &quot;\n\n💡 **Credenciais inválidas**: no **Outlook**, use a senha &quot;
+                        &quot;da conta ou uma senha de aplicativo e confira o **Remetente** &quot;
+                        &quot;e o **SMTP Login**.&quot;
+                    )
+                else:
+                    dica = (
+                        &quot;\n\n💡 **Credenciais inválidas**: confira se a **Senha de App &quot;
+                        &quot;do Gmail** (16 caracteres) foi gerada em Conta Google → &quot;
+                        &quot;Segurança → Verificação em 2 etapas → **Senhas de App** e &quot;
+                        &quot;colada corretamente, e se o **Remetente** é a conta que criou &quot;
+                        &quot;essa senha.&quot;
+                    )
+            elif (
+                &quot;connection&quot; in msg_erro
+                or &quot;timed out&quot; in msg_erro
+                or &quot;refused&quot; in msg_erro
+                or &quot;socket&quot; in msg_erro
+            ):
+                dica = (
+                    f&quot;\n\n💡 **Falha de conexão** com o servidor SMTP &quot;
+                    f&quot;({smtp_host}:{smtp_port}). Verifique sua conexão com a internet &quot;
+                    &quot;e as configurações de Host/Porta.&quot;
+                )
+            else:
+                dica = &quot;&quot;
+            st.warning(
+                f&quot;Erro ao enviar e-mail de alerta: {e}{dica}\n\n&quot;
+                &quot;Registrado na aba 🐞 Registro de Erros para ajuda.&quot;
+            )
+    elif email_ativo:
+        faltam = []
+        if not email_remetente:
+            faltam.append(&quot;Seu E-mail (Remetente)&quot;)
+        if not email_senha:
+            faltam.append(&quot;Senha de App&quot;)
+        if not email_destinatario:
+            faltam.append(&quot;E-mail do Responsável&quot;)
+        st.warning(
+            &quot;⚠️ Alerta E-mail ativado, mas a configuração está incompleta. &quot;
+            f&quot;Faltam: {&#x27;, &#x27;.join(faltam)}. Preencha em ⚙️ Configurar Notificações.&quot;
+        )
+
+    # 2. Disparo por WhatsApp/SMS (Twilio API)
+    if twilio_ativo and twilio_sid and twilio_token and twilio_de and twilio_para:
+        try:
+            msg_txt = f&quot;🚨 *ALERTA DE SEGURANÇA*\n\nTentativa de acesso negada!\n- *Compartimento do Cofre:* {area}\n- *Data/Hora:* {dh}\n- *Motivo:* {motivo}&quot;
+            url = f&quot;https://api.twilio.com/2010-04-01/Accounts/{twilio_sid}/Messages.json&quot;
+            data = {&quot;From&quot;: twilio_de, &quot;To&quot;: twilio_para, &quot;Body&quot;: msg_txt}
+            resp = requests.post(
+                url, data=data, auth=(twilio_sid, twilio_token)
+            )
+            if resp.status_code in [200, 201]:
+                st.toast(&quot;📱 Alerta enviado por WhatsApp/SMS!&quot;, icon=&quot;📲&quot;)
+            else:
+                registrar_erro(
+                    &quot;TWILIO&quot;,
+                    &quot;Alerta WhatsApp/SMS&quot;,
+                    f&quot;HTTP {resp.status_code}: {resp.text}&quot;,
+                )
+                st.warning(&quot;Erro na resposta da Twilio (registrado nos logs).&quot;)
+        except Exception as e:
+            registrar_erro(&quot;TWILIO&quot;, &quot;Alerta WhatsApp/SMS&quot;, str(e))
+            st.warning(
+                f&quot;Erro ao enviar mensagem Twilio: {e}\n\n&quot;
+                &quot;Registrado na aba 🐞 Registro de Erros para ajuda.&quot;
+            )
+    elif twilio_ativo:
+        faltam_t = []
+        if not twilio_sid:
+            faltam_t.append(&quot;Account SID&quot;)
+        if not twilio_token:
+            faltam_t.append(&quot;Auth Token&quot;)
+        if not twilio_de:
+            faltam_t.append(&quot;Número Twilio (De)&quot;)
+        if not twilio_para:
+            faltam_t.append(&quot;Seu WhatsApp (Para)&quot;)
+        st.warning(
+            &quot;⚠️ Alerta Twilio ativado, mas a configuração está incompleta. &quot;
+            f&quot;Faltam: {&#x27;, &#x27;.join(faltam_t)}. Preencha em ⚙️ Configurar Notificações.&quot;
+        )
+
+
+def _config_alertas_pronta():
+    &quot;&quot;&quot;Confere e avisa se a configuração de e-mail está pronta para envio.&quot;&quot;&quot;
+    email_ativo = st.session_state.get(&quot;cfg_email_ativo&quot;, False)
+    email_remetente = st.session_state.get(&quot;cfg_email_remetente&quot;, &quot;&quot;).strip()
+    email_senha = st.session_state.get(&quot;cfg_email_senha&quot;, &quot;&quot;).strip()
+    email_destinatario = st.session_state.get(
+        &quot;cfg_email_destinatario&quot;, &quot;&quot;
+    ).strip()
+    if not email_ativo:
+        st.warning(
+            &quot;⚠️ Marque **Ativar Alerta E-mail** em ⚙️ Configurar Notificações &quot;
+            &quot;antes de enviar o teste.&quot;
+        )
+        return False
+    faltam = []
+    if not email_remetente:
+        faltam.append(&quot;Seu E-mail (Remetente)&quot;)
+    if not email_senha:
+        faltam.append(&quot;Senha de App&quot;)
+    if not email_destinatario:
+        faltam.append(&quot;E-mail do Responsável&quot;)
+    if faltam:
+        st.warning(
+            &quot;⚠️ Configuração de e-mail incompleta. Faltam: &quot;
+            + &quot;, &quot;.join(faltam)
+            + f&quot;. Preencha em ⚙️ Configurar Notificações.&quot;,
+        )
+        return False
+    return True
+
+
+def salvar_colaborador():
+    nome = st.session_state.get(&quot;reg_nome&quot;, &quot;&quot;).strip()
+    cargo = st.session_state.get(&quot;reg_cargo&quot;, &quot;&quot;).strip()
+    divisao = st.session_state.get(&quot;reg_divisao&quot;, &quot;Sem divisão&quot;)
+    nivel = st.session_state.get(&quot;reg_nivel&quot;, 1)
+    foto_bytes = st.session_state.get(&quot;foto_capturada_bytes&quot;, None)
+
+    if not nome or foto_bytes is None:
+        st.session_state[&quot;msg_status&quot;] = (
+            &quot;error&quot;,
+            &quot;⚠️ Preencha o Nome e tire/envie a Foto antes de cadastrar.&quot;,
+        )
+        return
+
+    try:
+        filename = (
+            f&quot;{nome.replace(&#x27; &#x27;, &#x27;_&#x27;).lower()}_{int(datetime.now().timestamp())}.jpg&quot;
+        )
+        foto_path = os.path.join(FOTOS_DIR, filename)
+
+        with open(foto_path, &quot;wb&quot;) as f:
+            f.write(foto_bytes)
+
+        recortar_centro_rosto(foto_path)
+
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        data_hoje = datetime.now().strftime(&quot;%Y-%m-%d&quot;)
+        cursor.execute(
+            &quot;INSERT INTO colaboradores (nome, cargo, divisao, nivel_acesso, foto_path, data_cadastro) VALUES (?, ?, ?, ?, ?, ?)&quot;,
+            (nome, cargo, divisao, nivel, foto_path, data_hoje),
+        )
+
+        conn.commit()
+        conn.close()
+
+        st.session_state[&quot;reg_nome&quot;] = &quot;&quot;
+        st.session_state[&quot;reg_cargo&quot;] = &quot;&quot;
+        st.session_state[&quot;reg_divisao&quot;] = &quot;Sem divisão&quot;
+        st.session_state[&quot;reg_nivel&quot;] = 1
+        st.session_state.pop(&quot;foto_capturada_bytes&quot;, None)
+
+        st.session_state[&quot;msg_status&quot;] = (
+            &quot;success&quot;,
+            f&quot;✅ Colaborador **{nome}** cadastrado com sucesso! &quot;
+            f&quot;Nível de acesso: **{rotulo_nivel(nivel)}**.&quot;,
+        )
+    except Exception as e:
+        registrar_erro(&quot;BANCO&quot;, &quot;Cadastro de Colaborador&quot;, str(e))
+        st.session_state[&quot;msg_status&quot;] = (
+            &quot;error&quot;,
+            f&quot;❌ Erro ao cadastrar colaborador. Veja a aba 🐞 Registro de Erros para ajuda. ({e})&quot;,
+        )
+
+
+@st.cache_resource(show_spinner=False)
+def carregar_modelo_facial():
+    &quot;&quot;&quot;Carrega o modelo VGG-Face uma única vez (evita recarregar a cada validação).&quot;&quot;&quot;
+    try:
+        return DeepFace.build_model(&quot;VGG-Face&quot;)
+    except Exception as e:
+        registrar_erro(&quot;BIOMETRIA&quot;, &quot;Carregamento do Modelo Facial&quot;, str(e))
+        return None
+
+
+st.sidebar.title(&quot;🔐 Cofre de Toxinas&quot;)
+opcao = st.sidebar.radio(
+    &quot;Navegação:&quot;,
+    [
+        &quot;🔐 Cofre de Toxinas do MMA&quot;,
+        &quot;📸 Cadastro de Colaboradores&quot;,
+        &quot;📹 Validar Acesso / Login Biométrico&quot;,
+        &quot;📈 Dashboard Analítico de Acessos&quot;,
+        &quot;📊 Dashboard e Relatórios&quot;,
+        &quot;🐞 Registro de Erros / Logs&quot;,
+    ],
+)
+
+_usuario_sidebar = st.session_state.get(&quot;usuario_logado&quot;)
+if _usuario_sidebar:
+    expirou = st.session_state.get(&quot;sessao_expirada&quot;, False)
+    if not expirou and _sessao_valida():
+        st.sidebar.success(
+            f&quot;🟢 **{_usuario_sidebar[&#x27;nome&#x27;]}**\n{rotulo_nivel(_usuario_sidebar[&#x27;nivel_acesso&#x27;])}&quot;
+        )
+    else:
+        st.sidebar.warning(
+            &quot;⏱️ **Sessão expirada por inatividade.**\nFaça novo login biométrico.&quot;
+        )
+    if st.sidebar.button(&quot;🔓 Encerrar Sessão&quot;, use_container_width=True):
+        st.session_state.pop(&quot;usuario_logado&quot;, None)
+        st.session_state.pop(&quot;sessao_expirada&quot;, None)
+        st.rerun()
+else:
+    st.sidebar.info(&quot;🔴 Nenhuma sessão ativa&quot;)
+st.sidebar.divider()
+
+# --- CONFIGURAÇÕES DE ALERTAS NA SIDEBAR ---
+with st.sidebar.expander(&quot;⚙️ Configurar Notificações&quot;):
+    st.markdown(&quot;**📧 E-mail (SMTP)**&quot;)
+    st.checkbox(&quot;Ativar Alerta E-mail&quot;, key=&quot;cfg_email_ativo&quot;)
+    st.selectbox(
+        &quot;Provedor de e-mail (SMTP):&quot;,
+        list(PRESETS_SMTP.keys()),
+        key=&quot;cfg_email_provedor&quot;,
+        on_change=_definir_preset_smtp,
+    )
+    c1, c2 = st.columns([2, 1])
+    c1.text_input(&quot;Host SMTP:&quot;, key=&quot;cfg_email_smtp_host&quot;)
+    c2.text_input(&quot;Porta:&quot;, key=&quot;cfg_email_smtp_port&quot;)
+    st.text_input(
+        &quot;SMTP Login (opcional; padrão: remetente):&quot;,
+        key=&quot;cfg_email_smtp_login&quot;,
+        placeholder=&quot;ex.: seu@dominio.com.br (necessário no Brevo)&quot;,
+    )
+    st.text_input(
+        &quot;Seu E-mail (Remetente):&quot;,
+        key=&quot;cfg_email_remetente&quot;,
+        placeholder=&quot;seu@gmail.com&quot;,
+    )
+    st.text_input(
+        &quot;Senha de App:&quot;,
+        type=&quot;password&quot;,
+        key=&quot;cfg_email_senha&quot;,
+        help=&quot;Crie uma Senha de App no Gmail&quot;,
+    )
+    st.text_input(
+        &quot;E-mail do Responsável:&quot;,
+        key=&quot;cfg_email_destinatario&quot;,
+        placeholder=&quot;destino@empresa.com&quot;,
+    )
+
+    st.divider()
+    st.markdown(&quot;**📱 WhatsApp / SMS (Twilio)**&quot;)
+    st.checkbox(&quot;Ativar Alerta Twilio&quot;, key=&quot;cfg_twilio_ativo&quot;)
+    st.text_input(&quot;Account SID:&quot;, key=&quot;cfg_twilio_sid&quot;)
+    st.text_input(&quot;Auth Token:&quot;, type=&quot;password&quot;, key=&quot;cfg_twilio_token&quot;)
+    st.text_input(
+        &quot;Número Twilio (De):&quot;,
+        key=&quot;cfg_twilio_de&quot;,
+        placeholder=&quot;whatsapp:+14155238886&quot;,
+    )
+    st.text_input(
+        &quot;Seu WhatsApp (Para):&quot;,
+        key=&quot;cfg_twilio_para&quot;,
+        placeholder=&quot;whatsapp:+5511999999999&quot;,
+    )
+
+    st.divider()
+    _salvar_config_alerta()
+    if st.button(&quot;🔔 Enviar alerta de teste&quot;, use_container_width=True):
+        if _config_alertas_pronta():
+            enviar_alerta_seguranca(
+                &quot;🔧 TESTE&quot;,
+                &quot;Teste de notificação — configuração de alertas verificada com sucesso!&quot;,
+            )
+    if st.button(&quot;🚨 Simular acesso negado (gatilho)&quot;, use_container_width=True):
+        if _config_alertas_pronta():
+            enviar_alerta_seguranca(
+                &quot;Nível 3 – Ministro do Meio Ambiente&quot;,
+                &quot;Tentativa de acesso negada (simulação de teste) — biometria não reconhecida.&quot;,
+            )
+
+
+def ao_trocar_aba_guard(fn, modulo):
+    &quot;&quot;&quot;Envolve a lógica de uma aba em try/except para capturar erros inesperados.&quot;&quot;&quot;
+    try:
+        fn()
+    except Exception as e:
+        registrar_erro(&quot;GERAL&quot;, modulo, str(e))
+        st.error(
+            f&quot;❌ Ocorreu um erro inesperado nesta tela. Veja a aba 🐞 &quot;
+            f&quot;Registro de Erros para ajuda. ({e})&quot;
+        )
+
+
+if opcao == &quot;📸 Cadastro de Colaboradores&quot;:
+    def _aba_cadastro():
+        st.markdown(MOLDURA_CIRCULAR_CSS, unsafe_allow_html=True)
+        st.title(&quot;📸 Cadastro de Colaboradores e Permissões&quot;)
+
+        if &quot;msg_status&quot; in st.session_state:
+            tipo, msg = st.session_state.pop(&quot;msg_status&quot;)
+            if tipo == &quot;success&quot;:
+                st.success(msg)
+            else:
+                st.error(msg)
+
+        col1, col2 = st.columns([1, 1])
+
+        with col1:
+            st.subheader(&quot;Dados Pessoais&quot;)
+            st.text_input(&quot;Nome Completo:*&quot;, key=&quot;reg_nome&quot;)
+            st.text_input(&quot;Cargo / Função:&quot;, key=&quot;reg_cargo&quot;)
+            st.selectbox(
+                &quot;Divisão do Ministério:&quot;,
+                options=[&quot;Sem divisão&quot;] + DIVISOES_MMA,
+                key=&quot;reg_divisao&quot;,
+                help=(
+                    &quot;Diretores (nível 2) e o ministro (nível 3) pertencem a &quot;
+                    &quot;divisões específicas do MMA.&quot;
+                ),
+            )
+            st.selectbox(
+                &quot;Nível de Acesso ao Cofre:*&quot;,
+                options=list(NIVEIS_ACESSO.keys()),
+                format_func=rotulo_nivel,
+                key=&quot;reg_nivel&quot;,
+                help=(
+                    &quot;Níveis **cumulativos**: um colaborador de nível N acessa &quot;
+                    &quot;tudo dos níveis anteriores (1 a N).&quot;
+                ),
+            )
+            st.caption(descricao_nivel(st.session_state.get(&quot;reg_nivel&quot;, 1)))
+
+        with col2:
+            st.subheader(&quot;Captura da Foto&quot;)
+            metodo_foto = st.radio(
+                &quot;Origem da imagem:&quot;,
+                [&quot;Tirar Foto pela Webcam&quot;, &quot;Fazer Upload de Imagem&quot;],
+                key=&quot;metodo_foto_radio&quot;,
+            )
+
+            if metodo_foto == &quot;Tirar Foto pela Webcam&quot;:
+                foto_input = st.camera_input(
+                    &quot;Centralize o rosto no círculo verde antes de tirar a foto&quot;
+                )
+            else:
+                foto_input = st.file_uploader(
+                    &quot;Escolha um arquivo JPG/PNG&quot;, type=[&quot;jpg&quot;, &quot;jpeg&quot;, &quot;png&quot;]
+                )
+
+            if foto_input is not None:
+                st.session_state[&quot;foto_capturada_bytes&quot;] = foto_input.getvalue()
+
+        st.button(
+            &quot;💾 Cadastrar Colaborador&quot;,
+            type=&quot;primary&quot;,
+            on_click=salvar_colaborador,
+        )
+
+        st.divider()
+        st.subheader(&quot;👥 Colaboradores Já Cadastrados&quot;)
+
+        try:
+            conn = sqlite3.connect(DB_FILE)
+            df_colabs = pd.read_sql_query(
+                &quot;SELECT id, nome, cargo, divisao, nivel_acesso, data_cadastro FROM colaboradores&quot;,
+                conn,
+            )
+
+            if not df_colabs.empty:
+                df_colabs[&quot;nivel&quot;] = df_colabs[&quot;nivel_acesso&quot;].map(rotulo_nivel)
+                st.dataframe(
+                    df_colabs[
+                        [&quot;id&quot;, &quot;nome&quot;, &quot;cargo&quot;, &quot;divisao&quot;, &quot;nivel&quot;, &quot;data_cadastro&quot;]
+                    ].rename(
+                        columns={
+                            &quot;id&quot;: &quot;ID&quot;,
+                            &quot;nome&quot;: &quot;Nome&quot;,
+                            &quot;cargo&quot;: &quot;Cargo&quot;,
+                            &quot;divisao&quot;: &quot;Divisão&quot;,
+                            &quot;nivel&quot;: &quot;Nível de Acesso&quot;,
+                            &quot;data_cadastro&quot;: &quot;Data Cadastro&quot;,
+                        }
+                    ),
+                    width=&quot;stretch&quot;,
+                )
+            else:
+                st.info(&quot;Nenhum colaborador cadastrado ainda.&quot;)
+            conn.close()
+        except Exception as e:
+            registrar_erro(&quot;BANCO&quot;, &quot;Lista de Colaboradores&quot;, str(e))
+            st.error(
+                f&quot;Erro ao carregar colaboradores. Veja a aba 🐞 Registro de Erros &quot;
+                f&quot;para ajuda. ({e})&quot;
+            )
+
+    ao_trocar_aba_guard(_aba_cadastro, &quot;Cadastro de Colaboradores&quot;)
+
+elif opcao == &quot;📹 Validar Acesso / Login Biométrico&quot;:
+    def _aba_simulacao():
+        st.markdown(MOLDURA_CIRCULAR_CSS, unsafe_allow_html=True)
+        st.title(&quot;📹 Validação Biométrica / Login ao Cofre de Toxinas&quot;)
+
+        nivel_requerido = st.selectbox(
+            &quot;Selecione o nível do compartimento do cofre sendo acessado:&quot;,
+            options=list(NIVEIS_ACESSO.keys()),
+            format_func=rotulo_nivel,
+        )
+        area_requerida = rotulo_nivel(nivel_requerido)
+        st.markdown(
+            f&quot;**Status da Câmera:** Monitorando o acesso ao compartimento &quot;
+            f&quot;**[{area_requerida}]** do cofre.&quot;
+        )
+
+        bloq, minutos = _bloqueio_ativo(area_requerida)
+        if bloq:
+            st.error(
+                f&quot;⛔ **BLOQUEIO TEMPORÁRIO ATIVADO**\n\nO compartimento &quot;
+                f&quot;**{area_requerida}** está com a validação **suspensa por &quot;
+                f&quot;~{minutos} min** após tentativas repetidas de fraude ou &quot;
+                f&quot;acesso indevido. O responsável foi notificado.&quot;
+            )
+            tent_linhas = _tentativas_recentes(area_requerida)
+            if tent_linhas:
+                st.dataframe(pd.DataFrame(tent_linhas), width=&quot;stretch&quot;)
+            return
+
+        metodo_leitura = st.radio(
+            &quot;Origem da imagem:&quot;,
+            [
+                &quot;Tirar Foto pela Webcam&quot;,
+                &quot;🎥 Mini Vídeo Anti-Fraude (mova o rosto)&quot;,
+            ],
+            key=&quot;metodo_leitura_radio&quot;,
+        )
+
+        if metodo_leitura == &quot;🎥 Mini Vídeo Anti-Fraude (mova o rosto)&quot;:
+            _render_mini_video(nivel_requerido, area_requerida)
+            return
+
+        input_test = st.camera_input(
+            &quot;Centralize o rosto no círculo para leitura&quot;
+        )
+
+        if input_test is not None:
+            test_bytes = input_test.getvalue()
+            temp_test_path = &quot;temp_test.jpg&quot;
+            with open(temp_test_path, &quot;wb&quot;) as f:
+                f.write(test_bytes)
+
+            recortar_centro_rosto(temp_test_path)
+
+            try:
+                carregar_modelo_facial()
+                with st.spinner(&quot;Validando biometria facial...&quot;):
+                    melhor_candidato, menor_distancia = _melhor_match_biometrico(
+                        temp_test_path
+                    )
+
+                if os.path.exists(temp_test_path):
+                    os.remove(temp_test_path)
+
+                if melhor_candidato is not None and menor_distancia &lt;= 0.35:
+                    colab_id, colab_nome = melhor_candidato
+                    _conceder_ou_negar(
+                        colab_id,
+                        colab_nome,
+                        menor_distancia,
+                        nivel_requerido,
+                        area_requerida,
+                    )
+                else:
+                    st.error(
+                        f&quot;🚨 **ACESSO NEGADO!** Biometria não bateu com nenhum cadastrado. (Menor distância calculada: {menor_distancia:.3f})&quot;
+                    )
+                    registrar_log(
+                        &quot;Desconhecido&quot;,
+                        area_requerida,
+                        &quot;NEGADO&quot;,
+                        {&quot;motivo&quot;: &quot;Biometria não reconhecida (foto)&quot;},
+                    )
+                    _registrar_e_verificar_bloqueio(
+                        area_requerida,
+                        &quot;Biometria não reconhecida (foto).&quot;,
+                        origem=&quot;foto&quot;,
+                    )
+
+                    enviar_alerta_seguranca(
+                        area_requerida, &quot;Pessoa não identificada/desconhecida.&quot;
+                    )
+
+            except Exception as e:
+                registrar_erro(&quot;GERAL&quot;, &quot;Validação de Acesso&quot;, str(e))
+                st.error(
+                    f&quot;❌ Ocorreu um erro inesperado na validação de acesso. Veja &quot;
+                    f&quot;a aba 🐞 Registro de Erros para ajuda. ({e})&quot;
+                )
+
+    ao_trocar_aba_guard(_aba_simulacao, &quot;Validar Acesso / Login Biométrico&quot;)
+
+elif opcao == &quot;📈 Dashboard Analítico de Acessos&quot;:
+    def _aba_dash_analitico():
+        st.title(&quot;📈 Dashboard Analítico de Acessos ao Cofre&quot;)
+        st.caption(
+            &quot;Visão consolidada dos eventos de acesso ao **Cofre de Toxinas**: &quot;
+            &quot;tendências temporais, distribuição por compartimento do cofre, &quot;
+            &quot;colaboradores mais ativos e diagnóstico de segurança.&quot;
+        )
+
+        df_logs = _preparar_logs()
+
+        if df_logs.empty:
+            st.info(&quot;Nenhum registro de acesso encontrado.&quot;)
+            return
+
+        data_min = df_logs[&quot;data&quot;].min()
+        data_max = df_logs[&quot;data&quot;].max()
+
+        st.divider()
+        st.subheader(&quot;🔎 Filtros&quot;)
+
+        c1, c2 = st.columns([1, 1])
+        with c1:
+            periodo = st.selectbox(
+                &quot;Período rápido:&quot;,
+                [&quot;Tudo&quot;, &quot;Hoje&quot;, &quot;Últimos 7 dias&quot;, &quot;Últimos 30 dias&quot;],
+            )
+        with c2:
+            data_range = st.date_input(
+                &quot;Intervalo de datas:&quot;,
+                value=(data_min, data_max),
+                min_value=data_min,
+                max_value=data_max,
+            )
+
+        compartimentos_opcoes = sorted(
+            df_logs[&quot;area_dados&quot;].unique(),
+            key=lambda s: (
+                int(s.split(&quot;–&quot;)[0].replace(&quot;Nível&quot;, &quot;&quot;).strip())
+                if &quot;Nível&quot; in s
+                else 99
+            ),
+        )
+        f1, f2, f3 = st.columns(3)
+        with f1:
+            area_filter = st.multiselect(
+                &quot;Filtrar por Compartimento do Cofre:&quot;,
+                options=compartimentos_opcoes,
+                default=compartimentos_opcoes,
+            )
+        with f2:
+            status_filter = st.multiselect(
+                &quot;Filtrar por Status:&quot;,
+                options=sorted(df_logs[&quot;status&quot;].unique()),
+                default=sorted(df_logs[&quot;status&quot;].unique()),
+            )
+        with f3:
+            nome_filter = st.text_input(&quot;Buscar por Colaborador:&quot;)
+
+        if len(data_range) == 2:
+            data_inicio, data_fim = data_range
+        else:
+            data_inicio, data_fim = data_min, data_max
+
+        df = df_logs[
+            (df_logs[&quot;data&quot;] &gt;= data_inicio)
+            &amp; (df_logs[&quot;data&quot;] &lt;= data_fim)
+            &amp; (df_logs[&quot;area_dados&quot;].isin(area_filter))
+            &amp; (df_logs[&quot;status&quot;].isin(status_filter))
+        ]
+        if nome_filter:
+            df = df[
+                df[&quot;colaborador_nome&quot;].str.contains(
+                    nome_filter, case=False, na=False
+                )
+            ]
+
+        if df.empty:
+            st.warning(&quot;Nenhum evento no período/filtros selecionados.&quot;)
+            return
+
+        total = len(df)
+        permitidos = len(df[df[&quot;status&quot;] == &quot;PERMITIDO&quot;])
+        negados = len(df[df[&quot;status&quot;] == &quot;NEGADO&quot;])
+        taxa = (permitidos / total * 100) if total else 0.0
+        dias_periodo = max((data_fim - data_inicio).days, 1)
+        media_dia = total / dias_periodo
+
+        m1, m2, m3, m4, m5 = st.columns(5)
+        m1.metric(&quot;Total de Acessos&quot;, total)
+        m2.metric(&quot;Permitidos&quot;, permitidos)
+        m3.metric(&quot;Negados&quot;, negados)
+        m4.metric(&quot;Taxa de Aprovação&quot;, f&quot;{taxa:.1f}%&quot;)
+        m5.metric(&quot;Média / dia&quot;, f&quot;{media_dia:.1f}&quot;)
+
+        st.divider()
+        st.subheader(&quot;📅 Tendências Temporais&quot;)
+
+        serie_dia = (
+            df.groupby([&quot;data&quot;, &quot;status&quot;], as_index=False)
+            .size()
+            .rename(columns={&quot;size&quot;: &quot;contagem&quot;})
+        )
+        c1, c2 = st.columns([2, 1])
+        with c1:
+            chart_linha = (
+                alt.Chart(serie_dia)
+                .mark_line(point=True, strokeWidth=2)
+                .encode(
+                    x=alt.X(&quot;data:T&quot;, title=&quot;Data&quot;),
+                    y=alt.Y(&quot;contagem:Q&quot;, title=&quot;Nº de acessos&quot;),
+                    color=alt.Color(
+                        &quot;status:N&quot;,
+                        title=&quot;Status&quot;,
+                        scale=alt.Scale(
+                            domain=[&quot;PERMITIDO&quot;, &quot;NEGADO&quot;],
+                            range=[&quot;#00C853&quot;, &quot;#D50000&quot;],
+                        ),
+                    ),
+                    tooltip=[&quot;data:T&quot;, &quot;status:N&quot;, &quot;contagem:Q&quot;],
+                )
+                .properties(height=320)
+            )
+            st.altair_chart(chart_linha, use_container_width=True)
+
+        with c2:
+            status_tot = (
+                df.groupby(&quot;status&quot;, as_index=False)
+                .size()
+                .rename(columns={&quot;size&quot;: &quot;contagem&quot;})
+            )
+            chart_status = (
+                alt.Chart(status_tot)
+                .mark_arc()
+                .encode(
+                    theta=alt.Theta(&quot;contagem:Q&quot;, stack=True),
+                    color=alt.Color(
+                        &quot;status:N&quot;,
+                        scale=alt.Scale(
+                            domain=[&quot;PERMITIDO&quot;, &quot;NEGADO&quot;],
+                            range=[&quot;#00C853&quot;, &quot;#D50000&quot;],
+                        ),
+                    ),
+                    tooltip=[&quot;status:N&quot;, &quot;contagem:Q&quot;],
+                )
+                .properties(height=320)
+            )
+            st.altair_chart(chart_status, use_container_width=True)
+
+        st.divider()
+        st.subheader(&quot;🏢 Distribuição por Compartimento do Cofre&quot;)
+
+        dist_area = (
+            df.groupby([&quot;compartimento_curto&quot;, &quot;nivel&quot;], as_index=False)
+            .size()
+            .rename(columns={&quot;size&quot;: &quot;contagem&quot;})
+            .sort_values([&quot;nivel&quot;, &quot;compartimento_curto&quot;])
+        )
+        chart_area = (
+            alt.Chart(dist_area)
+            .mark_bar()
+            .encode(
+                x=alt.X(&quot;contagem:Q&quot;, title=&quot;Nº de eventos&quot;),
+                y=alt.Y(&quot;compartimento_curto:N&quot;, title=&quot;&quot;, sort=&quot;-x&quot;),
+                color=alt.Color(
+                    &quot;nivel:O&quot;,
+                    title=&quot;Nível de segurança&quot;,
+                    scale=alt.Scale(
+                        domain=[&quot;1&quot;, &quot;2&quot;, &quot;3&quot;],
+                        range=[&quot;#2E7D32&quot;, &quot;#F9A825&quot;, &quot;#C62828&quot;],
+                    ),
+                ),
+                tooltip=[&quot;compartimento_curto:N&quot;, &quot;nivel:O&quot;, &quot;contagem:Q&quot;],
+            )
+            .properties(height=320)
+        )
+        st.altair_chart(chart_area, use_container_width=True)
+        st.caption(
+            &quot;Níveis cumulativos do cofre de toxinas — &quot;
+            &quot;🟢 Nível 1: **Permissão Geral** · &quot;
+            &quot;🟡 Nível 2: **Diretores de Divisões Específicas** · &quot;
+            &quot;🔴 Nível 3: **Ministro do Meio Ambiente** (acesso exclusivo).&quot;
+        )
+
+        st.divider()
+        st.subheader(&quot;🎖️ Equipe do Cofre&quot;)
+        try:
+            conn2 = sqlite3.connect(DB_FILE)
+            df_colabs = pd.read_sql_query(
+                &quot;SELECT id, nome, cargo, divisao, nivel_acesso &quot;
+                &quot;FROM colaboradores&quot;,
+                conn2,
+            )
+            conn2.close()
+            if not df_colabs.empty:
+                e1, e2, e3, e4 = st.columns(4)
+                e1.metric(&quot;Colaboradores no cofre&quot;, len(df_colabs))
+                e2.metric(&quot;Nível 1 (Permissão Geral)&quot;, int((df_colabs[&quot;nivel_acesso&quot;] == 1).sum()))
+                e3.metric(&quot;Nível 2 (Diretores)&quot;, int((df_colabs[&quot;nivel_acesso&quot;] == 2).sum()))
+                e4.metric(&quot;Nível 3 (Ministro)&quot;, int((df_colabs[&quot;nivel_acesso&quot;] == 3).sum()))
+                df_colabs[&quot;nivel&quot;] = df_colabs[&quot;nivel_acesso&quot;].map(rotulo_nivel)
+                st.dataframe(
+                    df_colabs[
+                        [&quot;nome&quot;, &quot;cargo&quot;, &quot;divisao&quot;, &quot;nivel&quot;]
+                    ].rename(
+                        columns={
+                            &quot;nome&quot;: &quot;Nome&quot;,
+                            &quot;cargo&quot;: &quot;Cargo&quot;,
+                            &quot;divisao&quot;: &quot;Divisão&quot;,
+                            &quot;nivel&quot;: &quot;Nível de Acesso&quot;,
+                        }
+                    ),
+                    width=&quot;stretch&quot;,
+                )
+            else:
+                st.info(&quot;Nenhum colaborador cadastrado no cofre ainda.&quot;)
+        except Exception as e:
+            st.caption(f&quot;Equipe indisponível: {e}&quot;)
+
+        st.divider()
+        st.subheader(&quot;👥 Colaboradores Mais Ativos&quot;)
+
+        top_colabs = (
+            df.groupby(&quot;colaborador_nome&quot;, as_index=False)
+            .size()
+            .rename(columns={&quot;size&quot;: &quot;contagem&quot;})
+            .sort_values(&quot;contagem&quot;, ascending=False)
+            .head(10)
+        )
+        chart_top = (
+            alt.Chart(top_colabs)
+            .mark_bar()
+            .encode(
+                x=alt.X(&quot;contagem:Q&quot;, title=&quot;Nº de eventos&quot;),
+                y=alt.Y(&quot;colaborador_nome:N&quot;, title=&quot;&quot;, sort=&quot;-x&quot;),
+                color=alt.Color(
+                    &quot;contagem:Q&quot;, scale=alt.Scale(scheme=&quot;viridis&quot;)
+                ),
+                tooltip=[&quot;colaborador_nome:N&quot;, &quot;contagem:Q&quot;],
+            )
+            .properties(height=300)
+        )
+        st.altair_chart(chart_top, use_container_width=True)
+
+        st.divider()
+        st.subheader(&quot;🕐 Movimentação por Hora do Dia&quot;)
+
+        serie_hora = (
+            df.groupby([&quot;hora&quot;, &quot;status&quot;], as_index=False)
+            .size()
+            .rename(columns={&quot;size&quot;: &quot;contagem&quot;})
+        )
+        chart_hora = (
+            alt.Chart(serie_hora)
+            .mark_bar()
+            .encode(
+                x=alt.X(&quot;hora:O&quot;, title=&quot;Hora do dia&quot;),
+                y=alt.Y(&quot;contagem:Q&quot;, title=&quot;Nº de eventos&quot;),
+                color=alt.Color(
+                    &quot;status:N&quot;,
+                    scale=alt.Scale(
+                        domain=[&quot;PERMITIDO&quot;, &quot;NEGADO&quot;],
+                        range=[&quot;#00C853&quot;, &quot;#D50000&quot;],
+                    ),
+                ),
+                tooltip=[&quot;hora:O&quot;, &quot;status:N&quot;, &quot;contagem:Q&quot;],
+            )
+            .properties(height=300)
+        )
+        st.altair_chart(chart_hora, use_container_width=True)
+
+        st.divider()
+        st.subheader(&quot;🚨 Diagnóstico de Segurança do Cofre&quot;)
+
+        negados_df = df[df[&quot;status&quot;] == &quot;NEGADO&quot;]
+        if not negados_df.empty:
+            top_negados_area = (
+                negados_df.groupby(&quot;area_dados&quot;)
+                .size()
+                .sort_values(ascending=False)
+                .head(3)
+            )
+            st.warning(
+                f&quot;**{len(negados_df)} tentativas negadas** no período. &quot;
+                &quot;Compartimentos mais visados: &quot;
+                + &quot;, &quot;.join(
+                    f&quot;`{s}` ({n})&quot; for s, n in top_negados_area.items()
+                )
+                + &quot;.&quot;
+            )
+            desconhecidos = negados_df[
+                negados_df[&quot;colaborador_nome&quot;] == &quot;Desconhecido&quot;
+            ]
+            if not desconhecidos.empty:
+                st.warning(
+                    f&quot;**{len(desconhecidos)} eventos** de pessoa não &quot;
+                    &quot;identificada (possível tentativa de intrusão ao cofre).&quot;
+                )
+            tentativa_sem_perm = negados_df[
+                negados_df[&quot;colaborador_nome&quot;] != &quot;Desconhecido&quot;
+            ]
+            if not tentativa_sem_perm.empty:
+                st.warning(
+                    f&quot;**{len(tentativa_sem_perm)} eventos** de colaboradores &quot;
+                    &quot;identificados sem permissão para o compartimento do cofre.&quot;
+                )
+        else:
+            st.success(&quot;✅ Nenhuma tentativa negada no período selecionado.&quot;)
+
+        st.divider()
+        st.subheader(&quot;📄 Auditoria Detalhada dos Eventos&quot;)
+        st.dataframe(
+            df[
+                [
+                    &quot;data_hora&quot;,
+                    &quot;colaborador_nome&quot;,
+                    &quot;compartimento_curto&quot;,
+                    &quot;nivel&quot;,
+                    &quot;status&quot;,
+                ]
+            ]
+            .sort_values(&quot;data_hora&quot;, ascending=False)
+            .rename(
+                columns={
+                    &quot;data_hora&quot;: &quot;Data / Hora&quot;,
+                    &quot;colaborador_nome&quot;: &quot;Colaborador&quot;,
+                    &quot;compartimento_curto&quot;: &quot;Compartimento&quot;,
+                    &quot;nivel&quot;: &quot;Nível&quot;,
+                    &quot;status&quot;: &quot;Status&quot;,
+                }
+            ),
+            width=&quot;stretch&quot;,
+        )
+
+        df_export = df.rename(
+            columns={&quot;area_dados&quot;: &quot;compartimento&quot;}
+        ).drop(columns=[&quot;compartimento_curto&quot;])
+        csv_data = df_export.to_csv(index=False).encode(&quot;utf-8&quot;)
+        st.download_button(
+            label=&quot;📥 Exportar Eventos Filtrados (CSV)&quot;,
+            data=csv_data,
+            file_name=(
+                f&quot;eventos_cofre_{datetime.now().strftime(&#x27;%Y%m%d&#x27;)}.csv&quot;
+            ),
+            mime=&quot;text/csv&quot;,
+        )
+
+        st.divider()
+        st.subheader(&quot;📄 Relatório PDF&quot;)
+        st.caption(
+            &quot;Gera um relatório executivo em PDF com os indicadores dos filtros &quot;
+            &quot;ativos, gráficos ilustrativos e as tabelas de auditoria.&quot;
+        )
+        with st.spinner(&quot;Gerando relatório PDF com gráficos...&quot;):
+            pdf_bytes = gerar_relatorio_pdf(df)
+        st.download_button(
+            label=&quot;📄 Baixar Relatório PDF (Dados Filtrados + Gráficos)&quot;,
+            data=pdf_bytes,
+            file_name=(
+                f&quot;relatorio_cofre_{datetime.now().strftime(&#x27;%Y%m%d_%H%M&#x27;)}.pdf&quot;
+            ),
+            mime=&quot;application/pdf&quot;,
+        )
+
+    ao_trocar_aba_guard(_aba_dash_analitico, &quot;Dashboard Analítico de Acessos&quot;)
+
+elif opcao == &quot;📊 Dashboard e Relatórios&quot;:
+    def _aba_dash_relatorios():
+        st.title(&quot;📊 Auditoria e Métricas de Controle de Acesso ao Cofre&quot;)
+
+        df_logs = _preparar_logs()
+
+        if df_logs.empty:
+            st.info(&quot;Nenhum registro de acesso encontrado.&quot;)
+            return
+
+        total_acessos = len(df_logs)
+        permitidos = len(df_logs[df_logs[&quot;status&quot;] == &quot;PERMITIDO&quot;])
+        negados = len(df_logs[df_logs[&quot;status&quot;] == &quot;NEGADO&quot;])
+
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric(&quot;Total de Acessos&quot;, total_acessos)
+        m2.metric(&quot;Acessos Permitidos&quot;, permitidos)
+        m3.metric(
+            &quot;Tentativas Negadas / Alertas&quot;,
+            negados,
+            delta_color=&quot;inverse&quot; if negados &gt; 0 else &quot;normal&quot;,
+        )
+        m4.metric(&quot;Compartimentos monitorados&quot;, df_logs[&quot;nivel&quot;].nunique())
+
+        st.divider()
+
+        st.subheader(&quot;🔍 Filtros de Consulta&quot;)
+        f1, f2, f3 = st.columns(3)
+
+        compartimentos_opcoes = sorted(
+            df_logs[&quot;area_dados&quot;].unique(),
+            key=lambda s: (
+                int(s.split(&quot;–&quot;)[0].replace(&quot;Nível&quot;, &quot;&quot;).strip())
+                if &quot;Nível&quot; in s
+                else 99
+            ),
+        )
+        with f1:
+            area_filter = st.multiselect(
+                &quot;Filtrar por Compartimento do Cofre:&quot;,
+                options=compartimentos_opcoes,
+                default=compartimentos_opcoes,
+            )
+        with f2:
+            status_filter = st.multiselect(
+                &quot;Filtrar por Status:&quot;,
+                options=df_logs[&quot;status&quot;].unique(),
+                default=df_logs[&quot;status&quot;].unique(),
+            )
+        with f3:
+            nome_filter = st.text_input(&quot;Buscar por Colaborador:&quot;)
+
+        df_filtered = df_logs[
+            (df_logs[&quot;area_dados&quot;].isin(area_filter))
+            &amp; (df_logs[&quot;status&quot;].isin(status_filter))
+        ]
+        if nome_filter:
+            df_filtered = df_filtered[
+                df_filtered[&quot;colaborador_nome&quot;].str.contains(
+                    nome_filter, case=False, na=False
+                )
+            ]
+
+        st.subheader(&quot;📄 Histórico de Acessos&quot;)
+        st.dataframe(
+            df_filtered[
+                [
+                    &quot;data_hora&quot;,
+                    &quot;colaborador_nome&quot;,
+                    &quot;compartimento_curto&quot;,
+                    &quot;nivel&quot;,
+                    &quot;status&quot;,
+                ]
+            ]
+            .rename(
+                columns={
+                    &quot;data_hora&quot;: &quot;Data / Hora&quot;,
+                    &quot;colaborador_nome&quot;: &quot;Colaborador&quot;,
+                    &quot;compartimento_curto&quot;: &quot;Compartimento&quot;,
+                    &quot;nivel&quot;: &quot;Nível&quot;,
+                    &quot;status&quot;: &quot;Status&quot;,
+                }
+            ),
+            width=&quot;stretch&quot;,
+        )
+
+        df_export = df_filtered.rename(
+            columns={&quot;area_dados&quot;: &quot;compartimento&quot;}
+        ).drop(columns=[&quot;compartimento_curto&quot;])
+        csv_data = df_export.to_csv(index=False).encode(&quot;utf-8&quot;)
+        st.download_button(
+            label=&quot;📥 Exportar Relatório Filtrado (CSV)&quot;,
+            data=csv_data,
+            file_name=(
+                f&#x27;relatorio_cofre_{datetime.now().strftime(&quot;%Y%m%d&quot;)}.csv&#x27;
+            ),
+            mime=&quot;text/csv&quot;,
+        )
+
+        st.divider()
+        st.subheader(&quot;📄 Relatório PDF&quot;)
+        st.caption(
+            &quot;Gera um relatório executivo completo em PDF com todos os &quot;
+            &quot;indicadores, gráficos ilustrativos e as tabelas de auditoria.&quot;
+        )
+        with st.spinner(&quot;Gerando relatório PDF com gráficos...&quot;):
+            pdf_bytes = gerar_relatorio_pdf()
+        st.download_button(
+            label=&quot;📄 Baixar Relatório PDF (Completo + Gráficos)&quot;,
+            data=pdf_bytes,
+            file_name=(
+                f&quot;relatorio_cofre_completo_{datetime.now().strftime(&#x27;%Y%m%d_%H%M&#x27;)}.pdf&quot;
+            ),
+            mime=&quot;application/pdf&quot;,
+        )
+
+    ao_trocar_aba_guard(_aba_dash_relatorios, &quot;Dashboard e Relatórios&quot;)
+
+elif opcao == &quot;🐞 Registro de Erros / Logs&quot;:
+    def _aba_logs():
+        st.title(&quot;🐞 Registro de Erros / Logs&quot;)
+        st.caption(
+            &quot;Registros automáticos de erros capturados pela aplicação. Use os &quot;
+            &quot;filtros para localizar um erro e veja abaixo como entender e resolver.&quot;
+        )
+
+        conn = sqlite3.connect(DB_FILE)
+        df_erros = pd.read_sql_query(&quot;SELECT * FROM logs_erros&quot;, conn)
+        conn.close()
+
+        if df_erros.empty:
+            st.info(&quot;Nenhum erro registrado até o momento. 🎉&quot;)
+            return
+
+        df_erros[&quot;data_hora&quot;] = pd.to_datetime(df_erros[&quot;data_hora&quot;])
+        df_erros[&quot;data&quot;] = df_erros[&quot;data_hora&quot;].dt.date
+
+        st.divider()
+        st.subheader(&quot;🔎 Filtros de Erros&quot;)
+
+        f1, f2, f3 = st.columns(3)
+        with f1:
+            tipo_filter = st.multiselect(
+                &quot;Filtrar por Tipo de Erro:&quot;,
+                options=sorted(df_erros[&quot;tipo&quot;].unique()),
+                default=sorted(df_erros[&quot;tipo&quot;].unique()),
+            )
+        with f2:
+            modulo_filter = st.multiselect(
+                &quot;Filtrar por Módulo:&quot;,
+                options=sorted(df_erros[&quot;modulo&quot;].unique()),
+                default=sorted(df_erros[&quot;modulo&quot;].unique()),
+            )
+        with f3:
+            busca_filter = st.text_input(&quot;Buscar na mensagem:&quot;)
+
+        data_min = df_erros[&quot;data&quot;].min()
+        data_max = df_erros[&quot;data&quot;].max()
+        data_range = st.date_input(
+            &quot;Intervalo de datas:&quot;,
+            value=(data_min, data_max),
+            min_value=data_min,
+            max_value=data_max,
+        )
+        if len(data_range) == 2:
+            data_inicio, data_fim = data_range
+        else:
+            data_inicio, data_fim = data_min, data_max
+
+        df = df_erros[
+            (df_erros[&quot;data&quot;] &gt;= data_inicio)
+            &amp; (df_erros[&quot;data&quot;] &lt;= data_fim)
+            &amp; (df_erros[&quot;tipo&quot;].isin(tipo_filter))
+            &amp; (df_erros[&quot;modulo&quot;].isin(modulo_filter))
+        ]
+        if busca_filter:
+            df = df[
+                df[&quot;mensagem&quot;].str.contains(
+                    busca_filter, case=False, na=False
+                )
+            ]
+
+        st.divider()
+        st.subheader(&quot;📊 Resumo&quot;)
+        c1, c2, c3 = st.columns(3)
+        c1.metric(&quot;Total de Erros (filtrado)&quot;, len(df))
+
+        if not df.empty:
+            tipo_counts = (
+                df.groupby(&quot;tipo&quot;, as_index=False)
+                .size()
+                .rename(columns={&quot;size&quot;: &quot;contagem&quot;})
+            )
+            c2.metric(&quot;Tipos Distintos&quot;, len(tipo_counts))
+            mais_frequente = (
+                tipo_counts.sort_values(&quot;contagem&quot;, ascending=False).iloc[0]
+            )
+            c3.metric(&quot;Erro mais Frequente&quot;, str(mais_frequente[&quot;tipo&quot;]))
+
+            st.write(&quot;**Distribuição por tipo de erro:**&quot;)
+
+            chart_tipos = (
+                alt.Chart(tipo_counts)
+                .mark_bar()
+                .encode(
+                    x=alt.X(&quot;tipo:N&quot;, title=&quot;Tipo&quot;),
+                    y=alt.Y(&quot;contagem:Q&quot;, title=&quot;Nº de erros&quot;),
+                    color=alt.Color(&quot;tipo:N&quot;, legend=None),
+                    tooltip=[&quot;tipo:N&quot;, &quot;contagem:Q&quot;],
+                )
+                .properties(height=250)
+            )
+            st.altair_chart(chart_tipos, use_container_width=True)
+
+        st.divider()
+        st.subheader(&quot;🧾 Lista de Erros Registrados&quot;)
+
+        if df.empty:
+            st.warning(&quot;Nenhum erro atende aos filtros selecionados.&quot;)
+            return
+
+        st.dataframe(
+            df[[&quot;data_hora&quot;, &quot;tipo&quot;, &quot;modulo&quot;, &quot;mensagem&quot;]].sort_values(
+                &quot;data_hora&quot;, ascending=False
+            ),
+            width=&quot;stretch&quot;,
+        )
+
+        st.divider()
+        st.subheader(&quot;❓ Selecione um erro para ver a Ajuda / Como Resolver&quot;)
+
+        opcoes = {
+            f&quot;{r[&#x27;data_hora&#x27;]} | {r[&#x27;tipo&#x27;]} | {r[&#x27;modulo&#x27;]}&quot;: r[&quot;id&quot;]
+            for _, r in df.sort_values(&quot;data_hora&quot;, ascending=False).iterrows()
+        }
+        escolha = st.selectbox(
+            &quot;Erros (data/hora | tipo | módulo):&quot;,
+            options=list(opcoes.keys()),
+        )
+        escolhido_id = opcoes[escolha]
+        linha = df[df[&quot;id&quot;] == escolhido_id].iloc[0]
+
+        with st.expander(
+            &quot;🔑 Entender o erro (em linguagem simples)&quot;, expanded=True
+        ):
+            st.write(f&quot;**Explicação:** {linha[&#x27;descricao&#x27;]}&quot;)
+        with st.expander(&quot;🛠️ Como resolver / Sugestão&quot;, expanded=True):
+            st.write(f&quot;**Sugestão:** {linha[&#x27;sugerida&#x27;]}&quot;)
+        with st.expander(&quot;🖥️ Detalhe técnico&quot;, expanded=False):
+            st.code(linha[&quot;mensagem&quot;], language=&quot;text&quot;)
+
+        csv_data = df.to_csv(index=False).encode(&quot;utf-8&quot;)
+        st.download_button(
+            label=&quot;📥 Exportar Logs Filtrados (CSV)&quot;,
+            data=csv_data,
+            file_name=(
+                f&quot;logs_erros_{datetime.now().strftime(&#x27;%Y%m%d&#x27;)}.csv&quot;
+            ),
+            mime=&quot;text/csv&quot;,
+        )
+
+        st.divider()
+        if st.button(
+            &quot;🧹 Limpar todos os logs de erro&quot;,
+            type=&quot;secondary&quot;,
+            help=&quot;Remove permanentemente todos os registros de erro.&quot;,
+        ):
+            limpar_logs_erros()
+            st.rerun()
+
+    ao_trocar_aba_guard(_aba_logs, &quot;Registro de Erros / Logs&quot;)
+
+elif opcao == &quot;🔐 Cofre de Toxinas do MMA&quot;:
+    def _aba_dados_geo():
+        st.title(&quot;🔐 Cofre de Toxinas — Ministério do Meio Ambiente&quot;)
+        st.caption(
+            &quot;Painel do cofre de segurança máxima que guarda informações sobre &quot;
+            &quot;o uso de toxinas. O acesso a cada compartimento é controlado pelo &quot;
+            &quot;nível do colaborador autenticado (níveis cumulativos).&quot;
+        )
+
+        usuario = st.session_state.get(&quot;usuario_logado&quot;)
+        if not _sessao_valida():
+            expirou = st.session_state.get(&quot;sessao_expirada&quot;, False)
+            st.warning(
+                &quot;⏱️ **Sessão expirada ou nenhuma sessão ativa.** &quot; if expirou
+                else &quot;⚠️ **Nenhuma sessão ativa.** &quot;
+                + &quot;Valide o acesso biométrico na aba 📹 &quot;
+                &quot;**Validar Acesso / Login Biométrico** para visualizar o cofre.&quot;
+            )
+            return
+
+        st.success(
+            f&quot;🟢 Sessão ativa: **{usuario[&#x27;nome&#x27;]}** — {rotulo_nivel(usuario[&#x27;nivel_acesso&#x27;])}&quot;
+        )
+
+        df_toxinas = carregar_dados_toxinas()
+
+        # ---------------- NÍVEL 1 ----------------
+        st.divider()
+        st.subheader(&quot;🗂️ 1. Catálogo Público de Toxinas (Permissão Geral)&quot;)
+        st.caption(descricao_nivel(1))
+        if not usuario_tem_nivel(1):
+            st.info(&quot;🔒 **Bloqueado para o seu nível.** O catálogo exige nível 1.&quot;)
+        else:
+            cols_catalogo = [
+                &quot;id_toxina&quot;,
+                &quot;nome&quot;,
+                &quot;classe&quot;,
+                &quot;tipo_acao&quot;,
+                &quot;periculosidade&quot;,
+                &quot;uso&quot;,
+                &quot;divisao_responsavel&quot;,
+            ]
+            st.dataframe(df_toxinas[cols_catalogo], width=&quot;stretch&quot;)
+            st.caption(
+                f&quot;Total de **{len(df_toxinas)}** toxinas registradas no catálogo do cofre.&quot;
+            )
+
+            st.markdown(&quot;#### 🛡️ Missão da Sala do Cofre&quot;)
+            st.markdown(
+                &quot;Este cofre, oculto nas profundezas do **Ministério do Meio Ambiente**, &quot;
+                &quot;guarda os segredos mais sensíveis sobre o uso de toxinas. As substâncias &quot;
+                &quot;registradas aqui são tão poderosas que, se manuseadas de forma inadequada, &quot;
+                &quot;poderiam provocar uma nova pandemia mundial, devastar ecossistemas e &quot;
+                &quot;colocar em risco a vida na Terra. **Apenas pessoas devidamente &quot;
+                &quot;autorizadas** têm acesso, em um esquema de permissões dividido em &quot;
+                &quot;três níveis de segurança.&quot;
+            )
+
+        # ---------------- NÍVEL 2 ----------------
+        st.divider()
+        st.subheader(&quot;🗺️ 2. Inventário e Localização (Diretores de Divisões)&quot;)
+        st.caption(descricao_nivel(2))
+        if not usuario_tem_nivel(2):
+            st.info(&quot;🔒 **Bloqueado para o seu nível.** O inventário exige nível 2.&quot;)
+        else:
+            c1, c2 = st.columns([2, 1])
+            with c1:
+                chart_classe = (
+                    alt.Chart(df_toxinas)
+                    .mark_bar()
+                    .encode(
+                        x=alt.X(&quot;classe:N&quot;, title=&quot;&quot;, sort=&quot;-y&quot;),
+                        y=alt.Y(&quot;estoque_unidades:Q&quot;, title=&quot;Unidades em estoque&quot;),
+                        color=alt.Color(&quot;estado_conservacao:N&quot;, title=&quot;Estado&quot;),
+                        tooltip=[
+                            &quot;classe:N&quot;,
+                            &quot;estoque_unidades:Q&quot;,
+                            &quot;estado_conservacao:N&quot;,
+                        ],
+                    )
+                    .properties(height=300)
+                )
+                st.altair_chart(chart_classe, use_container_width=True)
+            with c2:
+                chart_comp = (
+                    alt.Chart(df_toxinas)
+                    .mark_circle(size=90)
+                    .encode(
+                        x=alt.X(&quot;compartimento:N&quot;, title=&quot;&quot;),
+                        y=alt.Y(&quot;periculosidade:Q&quot;, title=&quot;Periculosidade (1-5)&quot;),
+                        size=alt.Size(&quot;estoque_unidades:Q&quot;, title=&quot;Estoque&quot;),
+                        color=alt.Color(&quot;classe:N&quot;, title=&quot;Classe&quot;),
+                        tooltip=[
+                            &quot;id_toxina:N&quot;,
+                            &quot;nome:N&quot;,
+                            &quot;compartimento:N&quot;,
+                            &quot;periculosidade:Q&quot;,
+                        ],
+                    )
+                    .properties(height=300)
+                )
+                st.altair_chart(chart_comp, use_container_width=True)
+            st.caption(
+                &quot;Distribuição simulada das toxinas entre os compartimentos do cofre.&quot;
+            )
+
+            st.markdown(&quot;#### 🗄️ Estoque e conservação&quot;)
+            cols_estoque = [
+                &quot;id_toxina&quot;,
+                &quot;nome&quot;,
+                &quot;compartimento&quot;,
+                &quot;divisao_responsavel&quot;,
+                &quot;estoque_unidades&quot;,
+                &quot;temperatura_c&quot;,
+                &quot;data_validade&quot;,
+                &quot;estado_conservacao&quot;,
+            ]
+            st.dataframe(
+                df_toxinas[cols_estoque].sort_values(
+                    &quot;estoque_unidades&quot;, ascending=False
+                ),
+                width=&quot;stretch&quot;,
+            )
+            csv_inventario = df_toxinas.to_csv(index=False).encode(&quot;utf-8&quot;)
+            st.download_button(
+                &quot;📥 Exportar Inventário (CSV)&quot;,
+                data=csv_inventario,
+                file_name=&quot;inventario_toxinas.csv&quot;,
+                mime=&quot;text/csv&quot;,
+            )
+
+        # ---------------- NÍVEL 3 ----------------
+        st.divider()
+        st.subheader(&quot;🧪 3. Dossiê Completo e Movimentação (Ministro do Meio Ambiente)&quot;)
+        st.caption(descricao_nivel(3))
+        if not usuario_tem_nivel(3):
+            st.info(
+                &quot;🔒 **Bloqueado para o seu nível.** O dossiê exige nível 3.&quot;
+            )
+        else:
+            df_serie = serie_temporal_movimentacao()
+            divisoes = list(df_serie[&quot;divisao&quot;].unique())
+            selecao = st.multiselect(
+                &quot;Divisões do Ministério:&quot;,
+                options=divisoes,
+                default=divisoes,
+            )
+            if selecao:
+                df_serie = df_serie[df_serie[&quot;divisao&quot;].isin(selecao)]
+            chart_serie = (
+                alt.Chart(df_serie)
+                .mark_line(point=True)
+                .encode(
+                    x=alt.X(&quot;mes:T&quot;, title=&quot;Mês / Ano&quot;),
+                    y=alt.Y(&quot;movimentacoes:Q&quot;, title=&quot;Movimentações&quot;),
+                    color=alt.Color(&quot;divisao:N&quot;, title=&quot;Divisão&quot;),
+                    tooltip=[&quot;divisao:N&quot;, &quot;mes:T&quot;, &quot;movimentacoes:Q&quot;],
+                )
+                .properties(height=320)
+            )
+            st.altair_chart(chart_serie, use_container_width=True)
+            st.caption(
+                &quot;Série temporal simulada de movimentações de toxinas por divisão.&quot;
+            )
+
+            st.markdown(&quot;#### 🕵️ Cadeia de custódia (exemplo)&quot;)
+            custodia = pd.DataFrame(
+                [
+                    {&quot;lote&quot;: &quot;TOX-0006/2026&quot;, &quot;toxina&quot;: &quot;Toxina Botulínica Tipo A&quot;,
+                     &quot;de&quot;: &quot;Compartimento A-04&quot;, &quot;para&quot;: &quot;Laboratório Central&quot;,
+                     &quot;responsavel&quot;: &quot;Diretor de Pesquisa&quot;, &quot;data_hora&quot;: &quot;2026-08-14 09:32&quot;},
+                    {&quot;lote&quot;: &quot;TOX-0001/2026&quot;, &quot;toxina&quot;: &quot;Ricina&quot;,
+                     &quot;de&quot;: &quot;Compartimento A-01&quot;, &quot;para&quot;: &quot;Sala de Análises&quot;,
+                     &quot;responsavel&quot;: &quot;Diretor de Toxicologia&quot;, &quot;data_hora&quot;: &quot;2026-08-15 14:05&quot;},
+                    {&quot;lote&quot;: &quot;TOX-0004/2026&quot;, &quot;toxina&quot;: &quot;Microcistina-LR&quot;,
+                     &quot;de&quot;: &quot;Compartimento B-01&quot;, &quot;para&quot;: &quot;Incinerador controlado&quot;,
+                     &quot;responsavel&quot;: &quot;Ministro do Meio Ambiente&quot;, &quot;data_hora&quot;: &quot;2026-09-02 10:12&quot;},
+                ]
+            )
+            st.dataframe(custodia, width=&quot;stretch&quot;)
+
+        # ---------------- GOVERNANÇA ----------------
+        st.divider()
+        st.subheader(&quot;🏛️ Gestão e Auditoria do Cofre&quot;)
+        st.caption(&quot;Painel executivo de governança, acessível pelo nível 3 (ministro).&quot;)
+        if not usuario_tem_nivel(3):
+            st.info(
+                &quot;🔒 **Bloqueado para o seu nível.** A governança exige nível 3.&quot;
+            )
+        else:
+            conn = sqlite3.connect(DB_FILE)
+            df_colabs = pd.read_sql_query(
+                &quot;SELECT id, nome, cargo, divisao, nivel_acesso, data_cadastro &quot;
+                &quot;FROM colaboradores&quot;,
+                conn,
+            )
+            df_logs_area = pd.read_sql_query(&quot;SELECT * FROM logs_acesso&quot;, conn)
+            conn.close()
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric(&quot;Toxinas custodiadas&quot;, len(df_toxinas))
+            c2.metric(
+                &quot;Unidades em estoque&quot;, int(df_toxinas[&quot;estoque_unidades&quot;].sum())
+            )
+            c3.metric(&quot;Colaboradores cadastrados&quot;, len(df_colabs))
+            c4.metric(&quot;Eventos de acesso registrados&quot;, len(df_logs_area))
+            criticas = (df_toxinas[&quot;estado_conservacao&quot;] == &quot;Crítico&quot;).sum()
+            if criticas:
+                st.warning(
+                    f&quot;⚠️ {criticas} toxina(s) em estado de conservação **CRÍTICO** &quot;
+                    &quot;exigem inspeção imediata.&quot;
+                )
+            else:
+                st.success(&quot;✅ Todas as toxinas em estado de conservação estável.&quot;)
+
+            if not df_colabs.empty:
+                df_colabs[&quot;nivel&quot;] = df_colabs[&quot;nivel_acesso&quot;].map(rotulo_nivel)
+                st.dataframe(
+                    df_colabs[
+                        [&quot;id&quot;, &quot;nome&quot;, &quot;cargo&quot;, &quot;divisao&quot;, &quot;nivel&quot;, &quot;data_cadastro&quot;]
+                    ],
+                    width=&quot;stretch&quot;,
+                )
+            csv_full = df_toxinas.to_csv(index=False).encode(&quot;utf-8&quot;)
+            st.download_button(
+                &quot;📥 Exportar Base do Cofre (CSV)&quot;,
+                data=csv_full,
+                file_name=&quot;dados_cofre_toxinas.csv&quot;,
+                mime=&quot;text/csv&quot;,
+            )
+
+    ao_trocar_aba_guard(_aba_dados_geo, &quot;Cofre de Toxinas (Dados)&quot;)
+
+<h2>Anexo B — Script auxiliar: gerar_excel.py</h2>
+<p>Gera a planilha <code>Relatorio_Controle_Acesso_Facial.xlsx</code> com abas
+"Dashboard &amp; Métricas", "Logs de Acesso" e "Cadastro Colaboradores",
+utilizando <code>openpyxl</code> com fórmulas (COUNTIF/COUNTIFS), formatação
+condicional e paleta corporativa.</p>
+<p class="linha"></p>
+import openpyxl
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils import get_column_letter
+
+# Criação da pasta de trabalho e abas
+wb = openpyxl.Workbook()
+ws_dash = wb.active
+ws_dash.title = &quot;Dashboard &amp; Métricas&quot;
+ws_logs = wb.create_sheet(title=&quot;Logs de Acesso&quot;)
+ws_users = wb.create_sheet(title=&quot;Cadastro Colaboradores&quot;)
+
+# Estilos e Cores (Paleta Corporativa)
+PRIMARY_DARK = &quot;1E293B&quot;
+HEADER_BG = &quot;0F172A&quot;
+CARD_BG = &quot;F8FAFC&quot;
+SUCCESS_BG = &quot;DCFCE7&quot;
+SUCCESS_FG = &quot;166534&quot;
+DANGER_BG = &quot;FEE2E2&quot;
+DANGER_FG = &quot;991B1B&quot;
+BORDER_COLOR = &quot;CBD5E1&quot;
+
+font_family = &quot;Segoe UI&quot;
+
+font_title = Font(name=font_family, size=16, bold=True, color=&quot;FFFFFF&quot;)
+font_header = Font(name=font_family, size=11, bold=True, color=&quot;FFFFFF&quot;)
+font_bold = Font(name=font_family, size=11, bold=True)
+font_regular = Font(name=font_family, size=10)
+
+fill_header = PatternFill(
+    start_color=HEADER_BG, end_color=HEADER_BG, fill_type=&quot;solid&quot;
+)
+fill_card = PatternFill(
+    start_color=CARD_BG, end_color=CARD_BG, fill_type=&quot;solid&quot;
+)
+fill_success = PatternFill(
+    start_color=SUCCESS_BG, end_color=SUCCESS_BG, fill_type=&quot;solid&quot;
+)
+font_success = Font(name=font_family, size=10, bold=True, color=SUCCESS_FG)
+fill_danger = PatternFill(
+    start_color=DANGER_BG, end_color=DANGER_BG, fill_type=&quot;solid&quot;
+)
+font_danger = Font(name=font_family, size=10, bold=True, color=DANGER_FG)
+
+thin_border = Border(
+    left=Side(style=&quot;thin&quot;, color=BORDER_COLOR),
+    right=Side(style=&quot;thin&quot;, color=BORDER_COLOR),
+    top=Side(style=&quot;thin&quot;, color=BORDER_COLOR),
+    bottom=Side(style=&quot;thin&quot;, color=BORDER_COLOR),
+)
+
+# -------------------------------------------------------------
+# ABA 1: Dashboard &amp; Métricas
+# -------------------------------------------------------------
+ws_dash.views.sheetView[0].showGridLines = True
+
+# Banner Principal
+ws_dash.merge_cells(&quot;A1:G2&quot;)
+banner_cell = ws_dash[&quot;A1&quot;]
+banner_cell.value = (
+    &quot;  SISTEMA DE CONTROLE DE ACESSO AO COFRE DE TOXINAS - MINISTÉRIO DO MEIO AMBIENTE - AUDITORIA&quot;
+)
+banner_cell.font = font_title
+banner_cell.fill = PatternFill(
+    start_color=PRIMARY_DARK, end_color=PRIMARY_DARK, fill_type=&quot;solid&quot;
+)
+banner_cell.alignment = Alignment(vertical=&quot;center&quot;, horizontal=&quot;left&quot;)
+
+# Cards de KPIs
+kpis = [
+    (
+        &quot;A4:B5&quot;,
+        &quot;TOTAL DE ACESSOS&quot;,
+        &quot;=COUNTA(&#x27;Logs de Acesso&#x27;!A2:A100)&quot;,
+        &quot;Total registrado&quot;,
+    ),
+    (
+        &quot;C4:D5&quot;,
+        &quot;ACESSOS PERMITIDOS&quot;,
+        &#x27;=COUNTIF(\&#x27;Logs de Acesso\&#x27;!D2:D100, &quot;PERMITIDO&quot;)&#x27;,
+        &quot;Acessos autorizados&quot;,
+    ),
+    (
+        &quot;E4:F5&quot;,
+        &quot;TENTATIVAS NEGADAS&quot;,
+        &#x27;=COUNTIF(\&#x27;Logs de Acesso\&#x27;!D2:D100, &quot;NEGADO&quot;)&#x27;,
+        &quot;Alertas de segurança&quot;,
+    ),
+]
+
+for range_str, title, formula, sub in kpis:
+    ws_dash.merge_cells(range_str)
+    top_left = range_str.split(&quot;:&quot;)[0]
+    cell = ws_dash[top_left]
+    cell.value = f&quot;{title}\n\n{formula}&quot;
+    cell.font = font_bold
+    cell.alignment = Alignment(
+        wrap_text=True, horizontal=&quot;center&quot;, vertical=&quot;center&quot;
+    )
+    cell.fill = fill_card
+
+    start_col, start_row = range_str.split(&quot;:&quot;)[0][0], int(
+        range_str.split(&quot;:&quot;)[0][1]
+    )
+    end_col, end_row = range_str.split(&quot;:&quot;)[1][0], int(
+        range_str.split(&quot;:&quot;)[1][1]
+    )
+    for r in range(start_row, end_row + 1):
+        for c in range(ord(start_col) - 64, ord(end_col) - 64 + 1):
+            ws_dash.cell(row=r, column=c).border = thin_border
+
+# Tabela Resumo
+ws_dash[&quot;A7&quot;] = &quot;Resumo de Acessos por Compartimento do Cofre (Nível)&quot;
+ws_dash[&quot;A7&quot;].font = Font(
+    name=font_family, size=13, bold=True, color=PRIMARY_DARK
+)
+
+headers_summary = [&quot;Compartimento (Nível)&quot;, &quot;Acessos Permitidos&quot;, &quot;Acessos Negados&quot;, &quot;% Sucesso&quot;]
+for col_num, h in enumerate(headers_summary, 1):
+    c = ws_dash.cell(row=8, column=col_num)
+    c.value = h
+    c.font = font_header
+    c.fill = fill_header
+    c.alignment = Alignment(horizontal=&quot;center&quot;, vertical=&quot;center&quot;)
+    c.border = thin_border
+
+setores = [
+    &quot;Nível 1 – Permissão Geral&quot;,
+    &quot;Nível 2 – Diretor de Divisões Específicas&quot;,
+    &quot;Nível 3 – Ministro do Meio Ambiente&quot;,
+]
+for idx, setor in enumerate(setores, start=9):
+    ws_dash.cell(row=idx, column=1, value=setor).font = font_regular
+    ws_dash.cell(
+        row=idx,
+        column=2,
+        value=f&#x27;=COUNTIFS(\&#x27;Logs de Acesso\&#x27;!C:C, A{idx}, \&#x27;Logs de Acesso\&#x27;!D:D, &quot;PERMITIDO&quot;)&#x27;,
+    ).font = font_regular
+    ws_dash.cell(
+        row=idx,
+        column=3,
+        value=f&#x27;=COUNTIFS(\&#x27;Logs de Acesso\&#x27;!C:C, A{idx}, \&#x27;Logs de Acesso\&#x27;!D:D, &quot;NEGADO&quot;)&#x27;,
+    ).font = font_regular
+
+    p_cell = ws_dash.cell(
+        row=idx,
+        column=4,
+        value=f&quot;=IF((B{idx}+C{idx})&gt;0, B{idx}/(B{idx}+C{idx}), 0)&quot;,
+    )
+    p_cell.font = font_regular
+    p_cell.number_format = &quot;0.0%&quot;
+
+    for col_num in range(1, 5):
+        c = ws_dash.cell(row=idx, column=col_num)
+        c.border = thin_border
+        if col_num &gt; 1:
+            c.alignment = Alignment(horizontal=&quot;center&quot;)
+
+# -------------------------------------------------------------
+# ABA 2: Logs de Acesso
+# -------------------------------------------------------------
+ws_logs.views.sheetView[0].showGridLines = True
+
+headers_logs = [
+    &quot;ID Log&quot;,
+    &quot;Data / Hora&quot;,
+    &quot;Compartimento Solicitado&quot;,
+    &quot;Status&quot;,
+    &quot;Colaborador Detectado&quot;,
+    &quot;Nível Biométrico (Match)&quot;,
+]
+for col_num, h in enumerate(headers_logs, 1):
+    c = ws_logs.cell(row=1, column=col_num)
+    c.value = h
+    c.font = font_header
+    c.fill = fill_header
+    c.alignment = Alignment(horizontal=&quot;center&quot;, vertical=&quot;center&quot;)
+    c.border = thin_border
+
+sample_logs = [
+    (
+        1001,
+        &quot;2026-08-27 08:14:22&quot;,
+        &quot;Nível 1 – Permissão Geral&quot;,
+        &quot;PERMITIDO&quot;,
+        &quot;Carlos Eduardo Silva&quot;,
+        &quot;98.4%&quot;,
+    ),
+    (
+        1002,
+        &quot;2026-08-27 08:30:10&quot;,
+        &quot;Nível 2 – Diretor de Divisões Específicas&quot;,
+        &quot;PERMITIDO&quot;,
+        &quot;Ana Beatriz Souza&quot;,
+        &quot;96.1%&quot;,
+    ),
+    (
+        1003,
+        &quot;2026-08-27 09:02:45&quot;,
+        &quot;Nível 3 – Ministro do Meio Ambiente&quot;,
+        &quot;NEGADO&quot;,
+        &quot;Carlos Eduardo Silva&quot;,
+        &quot;97.8%&quot;,
+    ),
+    (
+        1004,
+        &quot;2026-08-27 09:15:00&quot;,
+        &quot;Nível 2 – Diretor de Divisões Específicas&quot;,
+        &quot;PERMITIDO&quot;,
+        &quot;Mariana Oliveira&quot;,
+        &quot;99.1%&quot;,
+    ),
+    (
+        1005,
+        &quot;2026-08-27 10:22:18&quot;,
+        &quot;Nível 3 – Ministro do Meio Ambiente&quot;,
+        &quot;PERMITIDO&quot;,
+        &quot;Lucas Mendes&quot;,
+        &quot;94.5%&quot;,
+    ),
+    (
+        1006,
+        &quot;2026-08-27 11:05:33&quot;,
+        &quot;Nível 1 – Permissão Geral&quot;,
+        &quot;NEGADO&quot;,
+        &quot;Desconhecido / Visitante&quot;,
+        &quot;42.0%&quot;,
+    ),
+]
+
+for row_idx, row_data in enumerate(sample_logs, start=2):
+    for col_idx, val in enumerate(row_data, start=1):
+        c = ws_logs.cell(row=row_idx, column=col_idx, value=val)
+        c.font = font_regular
+        c.border = thin_border
+        c.alignment = Alignment(horizontal=&quot;center&quot;)
+
+        if col_idx == 4:
+            if val == &quot;PERMITIDO&quot;:
+                c.fill = fill_success
+                c.font = font_success
+            else:
+                c.fill = fill_danger
+                c.font = font_danger
+
+# -------------------------------------------------------------
+# ABA 3: Cadastro Colaboradores
+# -------------------------------------------------------------
+ws_users.views.sheetView[0].showGridLines = True
+
+headers_users = [
+    &quot;ID&quot;,
+    &quot;Nome Completo&quot;,
+    &quot;Cargo / Função&quot;,
+    &quot;Divisão&quot;,
+    &quot;Nível de Acesso&quot;,
+    &quot;Status Cadastro&quot;,
+    &quot;Data Cadastramento&quot;,
+]
+for col_num, h in enumerate(headers_users, 1):
+    c = ws_users.cell(row=1, column=col_num)
+    c.value = h
+    c.font = font_header
+    c.fill = fill_header
+    c.alignment = Alignment(horizontal=&quot;center&quot;, vertical=&quot;center&quot;)
+    c.border = thin_border
+
+sample_users = [
+    (
+        1,
+        &quot;Carlos Eduardo Silva&quot;,
+        &quot;Analista de Segurança&quot;,
+        &quot;Divisão de Toxicologia Ambiental&quot;,
+        &quot;Nível 1 – Permissão Geral&quot;,
+        &quot;Ativo&quot;,
+        &quot;2026-01-15&quot;,
+    ),
+    (
+        2,
+        &quot;Ana Beatriz Souza&quot;,
+        &quot;Diretora&quot;,
+        &quot;Divisão de Emergências Químicas&quot;,
+        &quot;Nível 2 – Diretor de Divisões Específicas&quot;,
+        &quot;Ativo&quot;,
+        &quot;2026-02-01&quot;,
+    ),
+    (
+        3,
+        &quot;Mariana Oliveira&quot;,
+        &quot;Ministra do Meio Ambiente&quot;,
+        &quot;Gabinete do Ministro&quot;,
+        &quot;Nível 3 – Ministro do Meio Ambiente&quot;,
+        &quot;Ativo&quot;,
+        &quot;2026-01-10&quot;,
+    ),
+    (
+        4,
+        &quot;Lucas Mendes&quot;,
+        &quot;Diretor&quot;,
+        &quot;Divisão de Fiscalização e Segurança Química&quot;,
+        &quot;Nível 2 – Diretor de Divisões Específicas&quot;,
+        &quot;Ativo&quot;,
+        &quot;2026-03-20&quot;,
+    ),
+]
+
+for row_idx, row_data in enumerate(sample_users, start=2):
+    for col_idx, val in enumerate(row_data, start=1):
+        c = ws_users.cell(row=row_idx, column=col_idx, value=val)
+        c.font = font_regular
+        c.border = thin_border
+        if col_idx in [1, 5, 6]:
+            c.alignment = Alignment(horizontal=&quot;center&quot;)
+
+# Ajuste automático das colunas
+for ws in [ws_dash, ws_logs, ws_users]:
+    for col in ws.columns:
+        max_len = 0
+        col_letter = get_column_letter(col[0].column)
+        for cell in col:
+            if cell.coordinate in [
+                &quot;A1&quot;,
+                &quot;B1&quot;,
+                &quot;C1&quot;,
+                &quot;D1&quot;,
+                &quot;E1&quot;,
+                &quot;F1&quot;,
+                &quot;G1&quot;,
+                &quot;A2&quot;,
+                &quot;B2&quot;,
+                &quot;C2&quot;,
+                &quot;D2&quot;,
+                &quot;E2&quot;,
+                &quot;F2&quot;,
+                &quot;G2&quot;,
+            ]:
+                continue
+            if cell.value:
+                max_len = max(max_len, len(str(cell.value)))
+        ws.column_dimensions[col_letter].width = max(max_len + 4, 12)
+
+# Salvar planilha
+file_name = &quot;Relatorio_Controle_Acesso_Facial.xlsx&quot;
+wb.save(file_name)
+print(f&quot;Planilha &#x27;{file_name}&#x27; gerada com sucesso!&quot;)
+
+</body>
+</html>
