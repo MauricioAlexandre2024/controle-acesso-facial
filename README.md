@@ -98,7 +98,7 @@ cada colaborador.
   * **Variação 3D (parallax)** de nariz/olhos/boca — bloqueia translação plana de foto;
   * **Piscada obrigatória** via EAR (68 landmarks dlib);
   * **Detecção de tela/Moiré** (FFT) para vídeo pré-gravado no celular.
-  * **Bloqueio temporário por compartimento:** 3 tentativas de fraude/negação em 10 min travam a validação por 15 min + alerta E-mail/WhatsApp. **Sessão expira por inatividade (5 min)**.
+  * **Bloqueio temporário por compartimento:** 3 tentativas de fraude/negação em 10 min travam a validação por 15 min. **Sessão expira por inatividade (5 min)**.
 * **📈 Dashboard Analítico de Acessos:** Tendências temporais, distribuição por compartimento, equipe do cofre (colaboradores por nível/divisão), diagnósticos de segurança e auditoria. Permite **exportar relatório PDF** com os filtros ativos e gráficos ilustrativos. **Restrito a níveis 2 e 3.**
 * **📊 Dashboard e Relatórios:** Métricas de acessos (Permitidos vs. Negados), filtros, exportação em CSV e **relatório PDF completo** com KPIs, gráficos e tabelas de auditoria. **Restrito a níveis 2 e 3.**
 * **🛡️ Gestão de Acessos (nível 3):** Cria/altera usuários, redefine senhas, ajusta níveis e concede a **permissão de cadastro** a 1–2 colaboradores de confiança.
@@ -106,61 +106,6 @@ cada colaborador.
 
 ---
 
-## 📬 Notificações de Segurança (E-mail, WhatsApp Web)
-
-Toda **tentativa de acesso negada** — rosto não reconhecido, **fraude detectada no mini vídeo**, nível insuficiente ou **bloqueio temporário do compartimento** — dispara um **alerta automático por e-mail** com compartimento, data/hora e motivo, registrado no banco para auditoria.
-
-O envio usa SMTP com **provedor configurável**. No menu lateral → **⚙️ Configurar Notificações**, escolha o provedor em "Provedor de e-mail (SMTP)". **Gmail**, **Outlook** e **Brevo** preenchem Host/Porta automaticamente.
-
-### Opção A — Brevo (recomendado quando o Google não libera "Senha de App")
-
-1. Crie uma conta grátis em [brevo.com](https://www.brevo.com).
-2. Em *Senders & IPs → Senders*, adicione seu remetente e **confirme o e-mail de verificação** enviado a ele.
-3. Em *Settings → SMTP & API → SMTP*, copie a **SMTP key**.
-4. No app, no painel ⚙️ Configurar Notificações:
-   - **Provedor de e-mail** → `Brevo` (preenche `smtp-relay.brevo.com:587`);
-   - **SMTP Login** → o login SMTP exibido no Brevo;
-   - **Senha de App** → a **SMTP key** copiada;
-   - **Remetente** e **E-mail do Responsável** → os e-mails desejados.
-
-### Opção B — Gmail (com Senha de App)
-
-1. Acesse [myaccount.google.com](https://myaccount.google.com) e ative a **Verificação em duas etapas** em *Segurança*.
-2. Em *Segurança → Senhas de app*, crie uma senha para "Correio" (se o Google exibir *"The setting you are not available for your account"*, a conta não permite — use a Opção A).
-3. Copie a senha de 16 caracteres gerada (ela substitui a senha normal da conta no envio de e-mail).
-
-### Preencher no aplicativo
-
-| Campo | Valor |
-|---|---|
-| **Ativar Alerta E-mail** | Marque o checkbox |
-| **Provedor de e-mail (SMTP)** | Gmail, Outlook ou Brevo |
-| **Host SMTP / Porta** | Preenchidos automaticamente (editáveis) |
-| **SMTP Login** | Padrão: remetente (Brevo exige o login SMTP próprio) |
-| **Seu E-mail (Remetente)** | Conta que envia (e confirmada no provedor) |
-| **Senha de App** | Senha de App do Gmail / SMTP key do Brevo |
-| **E-mail do Responsável** | Destinatário do alerta (pode ser o mesmo remetente) |
-
-Clique em **"🔔 Enviar alerta de teste"** — se o e-mail chegar, a configuração está funcionando. As configurações são **salvas no banco** (tabela `configuracoes`) e restauradas em todas as abas/dispositivos. O botão **"🚨 Simular acesso negado (gatilho)"** testa o alerta de uma negativa real, sem registrar nada no banco.
-
-> **Solução de problemas:** falhas de envio são registradas na aba **🐞 Registro de Erros** com a explicação e sugestão por provedor (ex.: "535" indica credenciais inválidas — Senha de App do Gmail ou SMTP key do Brevo). (WhatsApp/SMS via Twilio também está disponível no mesmo painel, para ativação futura.)
-
-### Grupo WhatsApp (Web) — automação via Selenium
-
-Além do e-mail, todo acesso negado dispara a **mensagem padrão de alerta** (`🚨 *ALERTA DE SEGURANÇA*` com compartimento, data/hora e motivo) para um **grupo do WhatsApp**, usando o **WhatsApp Web** logado em um **perfil de automação próprio** (Chrome + Selenium) — não utiliza API paga nem interfere no navegador do usuário.
-
-**Configuração (uma única vez):**
-
-1. No menu lateral → **⚙️ Configurar Notificações** → na seção **📱 Grupo WhatsApp (Web)**:
-   - **Ativar alerta no grupo WhatsApp Web** — marque a caixa;
-   - **ID do grupo** — no WhatsApp, abra o grupo → *Adicionar participantes → Convidar via link* → cole o código após `chat.whatsapp.com/`;
-   - **Nome do grupo** — nome exato exibido na lista de conversas (usado para abrir o grupo pela busca, mais confiável).
-2. Clique em **📲 Conectar WhatsApp Web (escanear QR)**: abre um Chrome dedicado; escaneie o QR com o celular (conta participante do grupo). Feito 1×.
-3. Clique em **📱 Testar envio ao grupo (WhatsApp Web)** para validar. O indicador 📶 junto ao botão mostra o status do perfil (`conectado` / `não conectado`), verificável a qualquer momento com **🔄 Verificar estado do perfil**.
-
-**Como funciona:** o WhatsApp Web abre no perfil de automação (`.waprofile/`, criado automaticamente). Caso não esteja conectado, a janela permanece aberta aguardando o QR; ao conectar, o alerta é enviado. O texto enviado é a mensagem padrão de segurança, e o envio é registrado em `logs_erros` para auditoria. Dependência: `selenium` (Google Chrome instalado).
-
----
 
 ## 📁 Estrutura do Projeto
 
@@ -171,8 +116,11 @@ Além do e-mail, todo acesso negado dispara a **mensagem padrão de alerta** (`�
 * `gerar_excel.py` — Gerador de relatório executivo em Excel com base em dados de exemplo.
 * `requirements.txt` — Dependências Python do projeto.
 * `documentacao_cofre_toxinas.*` — Documentação do sistema (DOCX/HTML/PDF).
+* `documentacao_projeto_reconhecimento.*` — Documentação consolidada do projeto (DOCX/PDF).
+* `diagrama_fluxo_geral.png` — Diagrama do fluxo geral do sistema.
+* `diagrama_niveis_auditoria.png` — Diagrama dos níveis de acesso e auditoria.
 * `.streamlit/config.toml` — Configurações do servidor Streamlit.
-* `.gitignore` — Arquivos locais excluídos do versionamento (banco, `.waprofile/`, `venv/`, relatórios gerados).
+* `.gitignore` — Arquivos locais excluídos do versionamento (banco, `venv/`, relatórios gerados).
 * `venv/` — Ambiente virtual Python (não versionado).
 
 ---
@@ -185,7 +133,7 @@ Além do e-mail, todo acesso negado dispara a **mensagem padrão de alerta** (`�
    source venv/bin/activate
    pip install -r requirements.txt
    ```
-   *(Necessário: Python 3.12 e o Google Chrome instalado, para o alerta via WhatsApp Web.)*
+   *(Necessário: Python 3.12.)*
 2. **Iniciar a aplicação:**
    ```bash
    streamlit run app.py
@@ -200,7 +148,7 @@ Além do e-mail, todo acesso negado dispara a **mensagem padrão de alerta** (`�
 * `logs_acesso` — `id, colaborador_nome, setor (compartimento solicitado), data_hora, status (PERMITIDO/NEGADO)`
 * `logs_erros` — `id, data_hora, tipo, modulo, mensagem, descricao, sugerida`
 * `tentativas_seguranca` — `id, compartimento, data_hora, motivo, detalhes, origem` (registra fraudes e negativas que acionam o bloqueio temporário)
-* `configuracoes` — `chave, valor` (persiste as configurações de notificação da sidebar)
+* `configuracoes` — `chave, valor` (persiste preferências do sistema, como as zonas clicáveis da home)
 
 > Os colaboradores previamente cadastrados foram reiniciados para o **Nível 1 (Permissão Geral)** na migração para o novo esquema de segurança do cofre.
 ## 📄 Exportação em PDF

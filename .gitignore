@@ -14,13 +14,24 @@ __pycache__/
 # Relatórios gerados
 Relatorio_Controle_Acesso_Facial.xlsx
 
+# Fotos de cadastro (dados pessoais) — nunca versionar
+fotos_cadastradas/
+
 # Segredos e env
 .env
 .env.*
 *.pem
 *.key
 
+# Backups locais
+*.bkp
+*.bkp.*
+
 # Arquivos temporários do sistema
 *.swp
 .DS_Store
 Thumbs.db
+
+# Locks do LibreOffice (.~lock.<arquivo>#)
+.~lock.*#
+~lock.*#

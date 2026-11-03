@@ -101,8 +101,6 @@ permitem auditoria completa.</p>
   compartimento (permissões cumulativas).</li>
   <li>Acesso permitido → abre a sessão e libera os compartimentos; negado →
   registra o evento, conta tentativas e pode acionar <em>bloqueio temporário</em>.</li>
-  <li>Eventos de fraude/acesso indevido disparam <strong>alertas por e-mail
-  (SMTP)</strong> e/ou <strong>WhatsApp/SMS (Twilio)</strong>.</li>
 </ol>
 
 <h2>2. Arquitetura e fluxo de funcionamento</h2>
@@ -130,9 +128,6 @@ mantém o estado da sessão do usuário no <code>st.session_state</code>.</p>
       <td>SQLite (<code>controle_acesso.db</code>) com 5 tabelas e controle de
       versão (<code>PRAGMA user_version</code>); fotos em
       <code>fotos_cadastradas/</code>.</td></tr>
-  <tr><td><strong>Notificações</strong></td>
-      <td>SMTP via <code>smtplib</code> (Gmail/Outlook/Brevo) e API REST da
-      Twilio via <code>requests</code>.</td></tr>
   <tr><td><strong>Relatórios</strong></td>
       <td>PDF gerado com <code>fpdf2</code> (fonte Unicode DejaVu) e gráficos
       Altair convertidos para PNG com <code>vl-convert</code>.</td></tr>
@@ -162,7 +157,7 @@ RECONHECIMENTO (DeepFace / VGG-Face)
    ▼
 DECISÃO (_conceder_ou_negar)
    │  - nível do colaborador ≥ nível exigido? → PERMITIDO (abre sessão)
-   │  - caso contrário ou desconhecido → NEGADO + auditoria + alerta
+   │  - caso contrário ou desconhecido → NEGADO + auditoria
    ▼
 Possível BLOQUEIO TEMPORÁRIO (3 tentativas em 10 min → 15 min bloqueio)
 </pre>
@@ -189,9 +184,6 @@ Linux. A linha 4 desativa a GPU/CUDA (evita mensagens ruidosas no terminal).</p>
       expiração da sessão.</td></tr>
   <tr><td><code>datetime / timedelta</code></td><td>Datas/horas nos registros,
       janela e duração do bloqueio.</td></tr>
-  <tr><td><code>email.mime.text.MIMEText</code></td><td>Construção da mensagem
-      do e-mail de alerta.</td></tr>
-  <tr><td><code>smtplib</code></td><td>Conexão SMTP (STARTTLS + login + envio).</td></tr>
   <tr><td><code>sqlite3</code></td><td>Banco de dados local (DML/DDL).</td></tr>
   <tr><td><code>math</code></td><td>Seno/tendência na série temporal simulada e
       aritmética no PDF.</td></tr>
@@ -229,8 +221,6 @@ Linux. A linha 4 desativa a GPU/CUDA (evita mensagens ruidosas no terminal).</p>
       <td>Renderiza gráficos Altair em PNG (memória) para o relatório PDF.</td></tr>
   <tr><td><strong>fpdf2</strong> (fpdf.FPDF)</td><td>2.8.8</td><td>Geração do
       relatório executivo em PDF com fonte Unicode DejaVu.</td></tr>
-  <tr><td><strong>requests</strong></td><td>2.34.2</td><td>Chamada HTTP à API da
-      Twilio para WhatsApp/SMS.</td></tr>
   <tr><td><strong>openpyxl</strong> (auxiliar)</td><td>3.1.5</td>
       <td>Gera a planilha de exemplo <code>Relatorio_Controle_Acesso_Facial.xlsx</code>
       (script <code>gerar_excel.py</code>).</td></tr>
@@ -265,8 +255,8 @@ o mapa GeoPandas não é chamado no app.</p>
       do bloqueio temporário.</td></tr>
   <tr><td><strong>configuracoes</strong></td>
       <td>chave (PK), valor</td>
-      <td>Persistência dos alertas (e-mail/Twilio): <code>cfg_email_*</code> e
-      <code>cfg_twilio_*</code>.</td></tr>
+       <td>Preferências persistentes do sistema (ex.: posições das máscaras
+       da home).</td></tr>
 </table>
 <h3>Migrações (user_version)</h3>
 <ul>
@@ -275,7 +265,7 @@ o mapa GeoPandas não é chamado no app.</p>
   <li><strong>v1 → v2:</strong> adiciona a coluna <code>detalhes</code> (JSON)
   em <code>logs_acesso</code>.</li>
   <li><strong>v2 → v3:</strong> cria a tabela <code>configuracoes</code> para
-  persistir as notificações.</li>
+  persistir as preferências do sistema.</li>
 </ul>
 
 <h2>5. Explicação do código em blocos (do início ao fim)</h2>
@@ -308,14 +298,11 @@ colunas com <code>PRAGMA table_info</code>; adiciona as colunas que faltam;
 usa <code>PRAGMA user_version</code> para executar cada migração uma única vez
 e preenche divisões vazias com "Sem divisão".</p>
 
-<h3>Bloco 5 — Configuração de notificações (linhas 179-267)</h3>
-<p><code>CHAVES_CONFIG_ALERTA</code> lista as chaves persistidas;
-<code>PRESETS_SMTP</code> mapeia os provedores (Gmail, Outlook, Brevo) aos seus
-servidores SMTP. <code>_definir_preset_smtp()</code> preenche host/porta ao
-mudar o provedor no selectbox. <code>_carregar_config_alerta()</code> e
-<code>_salvar_config_alerta()</code> leem/gravam a configuração no banco
-(com <code>ON CONFLICT DO UPDATE</code>). Os três são chamados na inicialização
-(linhas 270-272).</p>
+<h3>Bloco 5 — Configurações persistentes (linhas 179-267)</h3>
+<p>A tabela <code>configuracoes</code> (chave, valor) é usada para persistir
+preferências do sistema, como as posições das máscaras clicáveis da home. As
+funções de leitura e gravação usam <code>ON CONFLICT DO UPDATE</code> e são
+carregadas na inicialização do script.</p>
 
 <h3>Bloco 6 — Níveis de acesso e rótulos (linhas 274-316)</h3>
 <p><code>NIVEIS_ACESSO</code> define os três níveis cumulativos do cofre:
@@ -412,8 +399,8 @@ difícil. Limiar de aceite: <strong>distância ≤ 0.35</strong>.</p>
 <p><code>_conceder_ou_negar(...)</code> busca o nível real do colaborador no
 banco. Se <code>nivel_colab ≥ nivel_requerido</code>: sucesso, log PERMITIDO,
 cria <code>usuario_logado</code> na sessão (com <code>login_ts</code>) e toast.
-Senão: log NEGADO com motivo "Nível insuficiente", registra tentativa,
-dispara alerta e causa de bloqueio.</p>
+Senão: log NEGADO com motivo "Nível insuficiente", registra tentativa e
+causa de bloqueio.</p>
 
 <h3>Bloco 17 — Política de bloqueio temporário (linhas 1567-1671)</h3>
 <p>Constantes: <code>JANELA_FRAUDE_S=600</code> (10 min, janela de contagem),
@@ -422,8 +409,8 @@ dispara alerta e causa de bloqueio.</p>
 na tabela e conta quantas ocorreram na janela; <code>_bloqueio_ativo()</code>
 calcula (bloqueado, minutos restantes); <code>_tentativas_recentes()</code>
 lista as últimas para a tela; <code>_registrar_e_verificar_bloqueio()</code>
-registra, verifica e dispara o alerta de bloqueio (apenas 1 aviso por sessão,
-controlado por <code>alertou_bloqueio</code>).</p>
+registra, verifica e aciona o bloqueio do compartimento (controlado por
+<code>alertou_bloqueio</code>).</p>
 
 <h3>Bloco 18 — Mini vídeo anti-fraude (linhas 1674-1816)</h3>
 <p><code>_render_mini_video()</code> é a UI: <code>st.camera_input</code> captura
@@ -440,29 +427,17 @@ tem <em>try/except</em> com registro de erro.</p>
 
 <h3>Bloco 20 — Erros e ajuda ao operador (linhas 1839-1960)</h3>
 <p><code>obter_ajuda_erro(tipo, mensagem)</code> devolve (descrição, sugestão)
-amigáveis com base em padrões de texto (ex.: e-mail "535", "timeout",
-Twilio "401", imagem corrompida, biometria sem rosto, banco travado).
+amigáveis com base em padrões de texto (ex.: imagem corrompida, biometria sem
+rosto, banco travado, timeout).
 <code>registrar_erro()</code> grava na <code>logs_erros</code>;
 <code>limpar_logs_erros()</code> apaga o histórico.</p>
 
-<h3>Bloco 21 — Notificação por e-mail e WhatsApp/SMS (linhas 1963-2138)</h3>
-<p><code>enviar_alerta_seguranca(area, motivo)</code>:</p>
-<ul>
-  <li><strong>E-mail:</strong> lê a config da Session State, resolve host/porta
-  conforme o provedor (com fallback para o preset), monta mensagem
-  <code>MIMEText</code>, conecta via <code>smtplib.SMTP</code>, faz
-  <code>starttls()</code>, autentica e envia. Erros 535 ganham dica específica
-  por provedor (Gmail Senha de App, Brevo SMTP key, Outlook). Se o checkbox
-  estiver ativo mas incompleto, exibe <em>warning</em> listando os campos
-  faltantes.</li>
-  <li><strong>Twilio:</strong> POST na API
-  <code>api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json</code> com
-  autenticação básica; sucesso HTTP 200/201 → toast. Mesma regra de campos
-  faltantes.</li>
-</ul>
-<p><code>_config_alertas_pronta()</code> valida (checkbox + campos) antes dos
-botões de teste e mostra o que falta. Um <code>st.warning</code> substitui o
-antigo silêncio quando a configuração está incompleta.</p>
+<h3>Bloco 21 — Persistência de preferências (linhas 1963-2138)</h3>
+<p>Funções de leitura e gravação de preferências na tabela
+<code>configuracoes</code> (chave, valor), com
+<code>ON CONFLICT DO UPDATE</code>, usadas para guardar as posições das
+máscaras clicáveis da home e outras opções do sistema. As preferências são
+recarregadas na inicialização de cada sessão.</p>
 
 <h3>Bloco 22 — Cadastro de colaboradores (linhas 2141-2203)</h3>
 <p><code>salvar_colaborador()</code> valida nome e foto, grava o arquivo JPEG em
@@ -471,14 +446,9 @@ insere a linha em <code>colaboradores</code> e limpa o formulário.
 <code>carregar_modelo_facial()</code>, com <code>@st.cache_resource</code>,
 carrega o modelo VGG-Face uma única vez para todas as validações.</p>
 
-<h3>Bloco 23 — Sidebar: navegação, sessão e alertas (linhas 2206-2303)</h3>
+<h3>Bloco 23 — Sidebar: navegação e sessão (linhas 2206-2303)</h3>
 <p>Radio de navegação com as 6 telas. Mostra o usuário logado e o nível (ou
-aviso de sessão expirada) com botão "Encerrar Sessão". O expander
-"⚙️ Configurar Notificações" reúne os campos de e-mail (checkbox, provedor com
-<code>on_change</code>, host/porta/login, remetente, senha de app, destino) e
-Twilio (SID, token, número de origem/destino). Persiste ao sair do expander e
-tem os botões "🔔 Enviar alerta de teste" e "🚨 Simular acesso negado
-(gatilho)" — ambos validam a configuração antes do envio.</p>
+aviso de sessão expirada) com botão "Encerrar Sessão".</p>
 
 <h3>Bloco 24 — Abas da aplicação (linhas 2317-3391)</h3>
 <p>Cada aba é envolvida por <code>ao_trocar_aba_guard()</code>, que captura
@@ -509,7 +479,8 @@ erros inesperados e os registra em <code>logs_erros</code>:</p>
   Nível 1: catálogo público + missão da sala; Nível 2: inventário e localização
   (gráficos Altair + estoque/conservação + CSV); Nível 3: dossiê completo,
   série temporal de movimentações por divisão e cadeia de custódia; Governança
-  (nível 3): métricas, colaboradores, alerta de estado crítico e base completa.</li>
+  (nível 3): métricas, colaboradores, indicadores de estado crítico e base
+  completa.</li>
 </ul>
 
 <h2>6. Machine Learning / Deep Learning aplicados</h2>
@@ -666,7 +637,7 @@ todos os módulos dos níveis 1..N (<code>nivel_acesso >= requerido</code>).</p>
   <li>O bloqueio é por compartimento (<code>area_requerida</code>); a tela de
   validação encerra e mostra as tentativas recentes com data/hora, motivo e
   origem.</li>
-  <li>O alerta de bloqueio é disparado uma única vez por sessão
+  <li>O bloqueio é acionado uma única vez por sessão
   (controle <code>alertou_bloqueio</code> no session_state).</li>
 </ul>
 <h3>8.3 Sessão por inatividade</h3>
@@ -680,16 +651,12 @@ inacessível até novo login biométrico (<code>_sessao_valida</code>).</p>
   <li>Dashboards com diagnóstico de segurança (compartimentos mais visados,
   desconhecidos, colaboradores sem permissão).</li>
 </ul>
-<h3>8.5 Notificações</h3>
+<h3>8.5 Persistência de preferências</h3>
 <ul>
-  <li>E-mail via SMTP com provedores pré-configurados (Gmail/Outlook/Brevo) e
-  <strong>Senha de App</strong> para contas Google com verificação em 2 etapas;</li>
-  <li>Brevo (smtp-relay.brevo.com:587) como alternativa gratuita sem restrição
-  administrativa — requer: confirmar o remetente no painel, copiar a
-  <strong>SMTP key</strong> no campo *Senha de App* e preencher o
-  <strong>SMTP Login</strong>;</li>
-  <li>WhatsApp/SMS via Twilio (Account SID + Auth Token);</li>
-  <li>IOs mensagens trazem compartimento, data/hora e motivo.</li>
+  <li>Preferências simples são guardadas na tabela <code>configuracoes</code>
+  (chave, valor), como as posições das máscaras clicáveis da home;</li>
+  <li>As funções de leitura e gravação usam <code>ON CONFLICT DO UPDATE</code>
+  e são recarregadas na inicialização de cada sessão.</li>
 </ul>
 
 <h2>9. Como executar o sistema</h2>
@@ -699,7 +666,7 @@ python3.12 -m venv venv
 source venv/bin/activate
 
 # 2) Instalar as dependências
-pip install streamlit deepface opencv-python pillow numpy pandas altair             vl-convert-python fpdf2 dlib mtcnn face-recognition requests
+pip install streamlit deepface opencv-python pillow numpy pandas altair             vl-convert-python fpdf2 dlib mtcnn face-recognition
 
 # 3) Executar
 ./venv/bin/streamlit run app.py --server.port 8502
@@ -722,9 +689,6 @@ execução.</p>
   Erros</strong> para evidenciar a auditoria automática.</li>
   <li>Explicar que o bloqueio temporário protege contra força bruta, e que a
   expiração de sessão protege o cofre em caso de abandono do terminal.</li>
-  <li>Se possível, deixar a <strong>configuração de alertas</strong> (e-mail e/ou
-  Twilio) pronta antes da apresentação para demonstrar a notificação em tempo
-  real.</li>
 </ul>
 
 <h2>Anexo A — Código-fonte completo: app.py</h2>
@@ -739,19 +703,18 @@ os.environ[&quot;CUDA_VISIBLE_DEVICES&quot;] = &quot;-1&quot;
 
 import io
 import hashlib
+import base64
 import glob
 import json
+import secrets
 import time
 from datetime import datetime, timedelta
-from email.mime.text import MIMEText
-import smtplib
 import sqlite3
 from PIL import Image
 import cv2
 import numpy as np
 from deepface import DeepFace
 import pandas as pd
-import requests
 import streamlit as st
 import altair as alt
 import math
@@ -763,6 +726,45 @@ st.set_page_config(
     page_icon=&quot;🔐&quot;,
     layout=&quot;wide&quot;,
 )
+
+# CSS responsivo para dispositivos móveis
+MOBILE_CSS = &quot;&quot;&quot;
+&lt;style&gt;
+@media (max-width: 768px) {
+    div[data-testid=&quot;stHorizontalBlock&quot;] {
+        flex-direction: column;
+    }
+    div[data-testid=&quot;stHorizontalBlock&quot;] &gt; div {
+        width: 100% !important;
+        flex: unset !important;
+        min-width: 0 !important;
+    }
+    div[data-testid=&quot;stSidebar&quot;] {
+        width: min(85vw, 280px) !important;
+    }
+    div[data-testid=&quot;stMetricValue&quot;] {
+        font-size: 1.5rem !important;
+    }
+    h1 {
+        font-size: 1.6rem !important;
+    }
+    h2 {
+        font-size: 1.3rem !important;
+    }
+    .stButton &gt; button {
+        width: 100% !important;
+    }
+    div[data-testid=&quot;stCameraInput&quot;] {
+        max-width: 100% !important;
+    }
+    div[data-testid=&quot;stDataFrame&quot;] {
+        font-size: 0.8rem !important;
+    }
+}
+&lt;/style&gt;
+&quot;&quot;&quot;
+
+st.markdown(MOBILE_CSS, unsafe_allow_html=True)
 
 # Moldura circular visual no CSS
 MOLDURA_CIRCULAR_CSS = &quot;&quot;&quot;
@@ -785,6 +787,18 @@ div[data-testid=&quot;stCameraInput&quot;]::after {
     pointer-events: none;
     box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.4);
     z-index: 10;
+}
+&lt;/style&gt;
+&quot;&quot;&quot;
+
+IMAGEMHOME_DIR = &quot;IMAGEMHOME&quot;
+EXTENSOES_IMAGEM = (&quot;.png&quot;, &quot;.jpg&quot;, &quot;.jpeg&quot;, &quot;.webp&quot;)
+
+HOME_CSS = &quot;&quot;&quot;
+&lt;style&gt;
+div[data-testid=&quot;stImage&quot;] img {
+    border-radius: 14px;
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.35);
 }
 &lt;/style&gt;
 &quot;&quot;&quot;
@@ -900,6 +914,26 @@ def migrar_banco_legado():
                 &quot;&quot;&quot;
             )
             cursor.execute(&quot;PRAGMA user_version = 3&quot;)
+        if versao &lt; 4:
+            # Esquema de autenticação por credenciais (usuário/senha) e
+            # controle de quem pode cadastrar novos colaboradores.
+            if &quot;usuario&quot; not in colunas:
+                cursor.execute(
+                    &quot;ALTER TABLE colaboradores ADD COLUMN usuario TEXT&quot;
+                )
+            if &quot;senha_hash&quot; not in colunas:
+                cursor.execute(
+                    &quot;ALTER TABLE colaboradores ADD COLUMN senha_hash TEXT&quot;
+                )
+            if &quot;pode_cadastrar&quot; not in colunas:
+                cursor.execute(
+                    &quot;ALTER TABLE colaboradores ADD COLUMN pode_cadastrar INTEGER NOT NULL DEFAULT 0&quot;
+                )
+            cursor.execute(
+                &quot;CREATE UNIQUE INDEX IF NOT EXISTS idx_colaboradores_usuario &quot;
+                &quot;ON colaboradores(usuario) WHERE usuario IS NOT NULL&quot;
+            )
+            cursor.execute(&quot;PRAGMA user_version = 4&quot;)
         cursor.execute(
             &quot;UPDATE colaboradores SET divisao = &#x27;Sem divisão&#x27; &quot;
             &quot;WHERE divisao IS NULL OR divisao = &#x27;&#x27;&quot;
@@ -910,100 +944,29 @@ def migrar_banco_legado():
         pass
 
 
-CHAVES_CONFIG_ALERTA = [
-    &quot;cfg_email_ativo&quot;,
-    &quot;cfg_email_provedor&quot;,
-    &quot;cfg_email_smtp_host&quot;,
-    &quot;cfg_email_smtp_port&quot;,
-    &quot;cfg_email_smtp_login&quot;,
-    &quot;cfg_email_remetente&quot;,
-    &quot;cfg_email_senha&quot;,
-    &quot;cfg_email_destinatario&quot;,
-    &quot;cfg_twilio_ativo&quot;,
-    &quot;cfg_twilio_sid&quot;,
-    &quot;cfg_twilio_token&quot;,
-    &quot;cfg_twilio_de&quot;,
-    &quot;cfg_twilio_para&quot;,
-]
-
-PRESETS_SMTP = {
-    &quot;Gmail&quot;: (&quot;smtp.gmail.com&quot;, &quot;587&quot;),
-    &quot;Outlook&quot;: (&quot;smtp-mail.outlook.com&quot;, &quot;587&quot;),
-    &quot;Brevo&quot;: (&quot;smtp-relay.brevo.com&quot;, &quot;587&quot;),
-    &quot;Outro&quot;: (&quot;&quot;, &quot;&quot;),
-}
+def hash_senha(senha):
+    &quot;&quot;&quot;Gera o hash da senha com salt único (PBKDF2-HMAC-SHA256).&quot;&quot;&quot;
+    salt = secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac(
+        &quot;sha256&quot;, senha.encode(&quot;utf-8&quot;), bytes.fromhex(salt), 100_000
+    )
+    return f&quot;{salt}${digest.hex()}&quot;
 
 
-def _definir_preset_smtp():
-    &quot;&quot;&quot;Preenche host/porta da Session State conforme o provedor escolhido.&quot;&quot;&quot;
-    prov = st.session_state.get(&quot;cfg_email_provedor&quot;, &quot;Gmail&quot;)
-    if prov not in PRESETS_SMTP:
-        prov = &quot;Gmail&quot;
-    if prov == &quot;Outro&quot;:
-        return
-    host, porta = PRESETS_SMTP[prov]
-    st.session_state[&quot;cfg_email_smtp_host&quot;] = host
-    st.session_state[&quot;cfg_email_smtp_port&quot;] = porta
-
-
-def _carregar_config_alerta():
-    &quot;&quot;&quot;Pré-preenche a Session State com as notificações salvas no banco.&quot;&quot;&quot;
+def verificar_senha(senha, armazenado):
+    &quot;&quot;&quot;Confere a senha contra o valor armazenado no formato &#x27;salt$hash&#x27;.&quot;&quot;&quot;
+    if not armazenado or &quot;$&quot; not in armazenado:
+        return False
     try:
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
-        cursor.execute(
-            &quot;&quot;&quot;
-            CREATE TABLE IF NOT EXISTS configuracoes (
-                chave TEXT PRIMARY KEY,
-                valor TEXT
-            )
-            &quot;&quot;&quot;
+        salt, digest_hex = armazenado.split(&quot;$&quot;, 1)
+        digest = hashlib.pbkdf2_hmac(
+            &quot;sha256&quot;, senha.encode(&quot;utf-8&quot;), bytes.fromhex(salt), 100_000
         )
-        linhas = cursor.execute(
-            &quot;SELECT chave, valor FROM configuracoes&quot;
-        ).fetchall()
-        conn.close()
+        return secrets.compare_digest(digest.hex(), digest_hex)
     except Exception:
-        return
-    for chave, valor in linhas:
-        if chave in CHAVES_CONFIG_ALERTA and chave not in st.session_state:
-            st.session_state[chave] = (
-                valor == &quot;1&quot; if chave.endswith(&quot;_ativo&quot;) else valor
-            )
+        return False
 
 
-def _salvar_config_alerta():
-    &quot;&quot;&quot;Persiste as configurações de notificação no banco (quando houver mudança).&quot;&quot;&quot;
-    try:
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
-        atuais = dict(
-            cursor.execute(&quot;SELECT chave, valor FROM configuracoes&quot;).fetchall()
-        )
-        for chave in CHAVES_CONFIG_ALERTA:
-            valor = st.session_state.get(chave)
-            if valor is None:
-                continue
-            texto = (
-                (&quot;1&quot; if valor else &quot;0&quot;)
-                if isinstance(valor, bool)
-                else str(valor).strip()
-            )
-            if atuais.get(chave) != texto:
-                cursor.execute(
-                    &quot;INSERT INTO configuracoes (chave, valor) VALUES (?, ?) &quot;
-                    &quot;ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor&quot;,
-                    (chave, texto),
-                )
-        conn.commit()
-        conn.close()
-    except Exception:
-        pass
-
-
-init_db()
-migrar_banco_legado()
-_carregar_config_alerta()
 
 NIVEIS_ACESSO = {
     1: {
@@ -1290,13 +1253,16 @@ LIMITE_INATIVIDADE_S = 5 * 60  # 5 minutos sem interação =&gt; sessão expira
 
 
 def _sessao_valida():
-    &quot;&quot;&quot;True se existe sessão ativa e dentro do limite de inatividade.&quot;&quot;&quot;
+    &quot;&quot;&quot;True se existe sessão autenticada e dentro do limite de inatividade.&quot;&quot;&quot;
+    if not st.session_state.get(&quot;autenticado&quot;, False):
+        return False
     usuario = st.session_state.get(&quot;usuario_logado&quot;)
     if usuario is None:
         return False
     login_ts = usuario.get(&quot;login_ts&quot;, 0)
     if time.time() - login_ts &gt; LIMITE_INATIVIDADE_S:
         st.session_state.pop(&quot;usuario_logado&quot;, None)
+        st.session_state.pop(&quot;autenticado&quot;, None)
         st.session_state[&quot;sessao_expirada&quot;] = True
         return False
     return True
@@ -1308,6 +1274,30 @@ def usuario_tem_nivel(nivel_requerido):
         return False
     usuario = st.session_state.get(&quot;usuario_logado&quot;)
     return usuario is not None and usuario.get(&quot;nivel_acesso&quot;, 0) &gt;= nivel_requerido
+
+
+def usuario_pode_cadastrar():
+    &quot;&quot;&quot;True apenas se o usuário autenticado tem permissão de cadastro.&quot;&quot;&quot;
+    if not _sessao_valida():
+        return False
+    usuario = st.session_state.get(&quot;usuario_logado&quot;)
+    return usuario is not None and bool(usuario.get(&quot;pode_cadastrar&quot;, 0))
+
+
+def existe_usuario_com_credenciais():
+    &quot;&quot;&quot;True se ao menos um colaborador possui usuário cadastrado.&quot;&quot;&quot;
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cur = conn.cursor()
+        cur.execute(
+            &quot;SELECT COUNT(*) FROM colaboradores &quot;
+            &quot;WHERE usuario IS NOT NULL AND TRIM(usuario) &lt;&gt; &#x27;&#x27;&quot;
+        )
+        n = cur.fetchone()[0]
+        conn.close()
+        return int(n) &gt; 0
+    except Exception:
+        return False
 
 
 def _preparar_logs(df_logs=None):
@@ -2243,15 +2233,20 @@ def _melhor_match_biometrico(temp_test_path):
 def _conceder_ou_negar(
     colab_id, colab_nome, menor_distancia, nivel_requerido, area_requerida
 ):
-    &quot;&quot;&quot;Decisão final pós-reconhecimento: nível, login, logs e alertas.&quot;&quot;&quot;
+    &quot;&quot;&quot;Decisão final pós-reconhecimento: nível, login e logs.&quot;&quot;&quot;
+    estava_autenticado = st.session_state.get(&quot;autenticado&quot;, False)
     conn = sqlite3.connect(DB_FILE)
     cur = conn.cursor()
     cur.execute(
-        &quot;SELECT nivel_acesso FROM colaboradores WHERE id = ?&quot;, (colab_id,)
+        &quot;SELECT nivel_acesso, usuario, pode_cadastrar &quot;
+        &quot;FROM colaboradores WHERE id = ?&quot;,
+        (colab_id,),
     )
     linha_nivel = cur.fetchone()
     conn.close()
     nivel_colab = int(linha_nivel[0]) if linha_nivel else 1
+    usuario_credencial = linha_nivel[1] if linha_nivel else None
+    pode_cadastrar = int(linha_nivel[2] or 0) if linha_nivel else 0
 
     if nivel_colab &gt;= nivel_requerido:
         st.success(
@@ -2265,12 +2260,25 @@ def _conceder_ou_negar(
             &quot;id&quot;: colab_id,
             &quot;nome&quot;: colab_nome,
             &quot;nivel_acesso&quot;: nivel_colab,
+            &quot;usuario&quot;: usuario_credencial,
+            &quot;pode_cadastrar&quot;: pode_cadastrar,
             &quot;login_ts&quot;: time.time(),
+            &quot;metodo&quot;: &quot;biometria&quot;,
         }
+        st.session_state[&quot;autenticado&quot;] = True
         st.toast(
             &quot;🔓 Sessão iniciada. Compartimentos liberados conforme o nível do colaborador.&quot;,
             icon=&quot;🔓&quot;,
         )
+        if not estava_autenticado:
+            st.session_state[&quot;redirecionar_para&quot;] = &quot;🔐 Cofre de Toxinas do MMA&quot;
+            st.rerun()
+        if not usuario_credencial:
+            st.info(
+                &quot;ℹ️ **Acesso por biometria.** Este colaborador ainda não possui &quot;
+                &quot;usuário/senha definidos. Solicite ao nível 3 (Ministro) que &quot;
+                &quot;defina as credenciais na aba 🛡️ **Gestão de Acessos**.&quot;
+            )
         return True
 
     st.error(
@@ -2289,11 +2297,6 @@ def _conceder_ou_negar(
         f&quot;Acesso indevido: {colab_nome} (nível {nivel_colab}) tentou o &quot;
         f&quot;compartimento de nível {nivel_requerido}.&quot;,
         origem=&quot;foto&quot;,
-    )
-    enviar_alerta_seguranca(
-        area_requerida,
-        f&quot;Colaborador {colab_nome} tentou acessar o compartimento de nível &quot;
-        f&quot;{nivel_requerido} sem permissão (possui nível {nivel_colab}).&quot;,
     )
     return False
 
@@ -2389,19 +2392,13 @@ def _tentativas_recentes(compartimento, limite=8):
 
 def _registrar_e_verificar_bloqueio(compartimento, motivo, detalhes=None,
                                     origem=&quot;mini_video&quot;):
-    &quot;&quot;&quot;Registra a tentativa; se atingiu o limite, dispara alerta e bloqueia.&quot;&quot;&quot;
+    &quot;&quot;&quot;Registra a tentativa; se atingiu o limite, aciona o bloqueio.&quot;&quot;&quot;
     n = _registrar_tentativa_fraude(
         compartimento, motivo, detalhes, origem
     )
     bloq, minutos = _bloqueio_ativo(compartimento)
     if bloq and st.session_state.get(&quot;alertou_bloqueio&quot;) != compartimento:
         st.session_state[&quot;alertou_bloqueio&quot;] = compartimento
-        enviar_alerta_seguranca(
-            compartimento,
-            f&quot;⛔ **BLOQUEIO TEMPORÁRIO ATIVADO** no compartimento &quot;
-            f&quot;{compartimento} após {n} tentativas de fraude/acesso indevido. &quot;
-            f&quot;Validação suspensa por {minutos} min. Motivo: {motivo}&quot;,
-        )
     return bloq, minutos
 
 
@@ -2488,12 +2485,7 @@ def _render_mini_video(nivel_requerido, area_requerida):
                     f&quot;Nova validação permitida em até {minutos} min.&quot;
                 )
             else:
-                enviar_alerta_seguranca(
-                    area_requerida,
-                    &quot;Tentativa de acesso bloqueada pelo mini vídeo anti-fraude: &quot;
-                    f&quot;{motivo}&quot;,
-                )
-            return
+                return
 
         st.success(
             f&quot;✅ **Liveness aprovado!** {motivo}\n\nDetalhes: {detalhes}&quot;
@@ -2538,10 +2530,6 @@ def _render_mini_video(nivel_requerido, area_requerida):
                     &quot;Biometria não reconhecida (mini vídeo).&quot;,
                     origem=&quot;mini_video&quot;,
                 )
-                enviar_alerta_seguranca(
-                    area_requerida,
-                    &quot;Pessoa não identificada/desconhecida (mini vídeo).&quot;,
-                )
         except Exception as e:
             registrar_erro(&quot;GERAL&quot;, &quot;Validação de Acesso (Mini Vídeo)&quot;, str(e))
             st.error(
@@ -2580,52 +2568,6 @@ def obter_ajuda_erro(tipo, mensagem):
     )
 
     ajuda = {
-        &quot;EMAIL&quot;: [
-            (
-                (&quot;authenticationfailed&quot;, &quot;auth&quot;, &quot;535&quot;, &quot;invalid credentials&quot;,
-                 &quot;usernametoken&quot;),
-                &quot;As credenciais do e-mail remetente estão incorretas ou a &quot;
-                &quot;&#x27;Senha de App&#x27; não foi configurada para o Gmail.&quot;,
-                &quot;No Gmail: ative a verificação em 2 etapas e crie uma &quot;
-                &quot;&#x27;Senha de App&#x27; em https://myaccount.google.com/apppasswords. &quot;
-                &quot;Cole essa senha no campo &#x27;Senha de App&#x27; das configurações.&quot;,
-            ),
-            (
-                (&quot;errno -2&quot;, &quot;name or service not known&quot;, &quot;dns&quot;,
-                 &quot;getaddrinfo&quot;, &quot;temporarily unable&quot;, &quot;connection&quot;),
-                &quot;Não foi possível conectar ao servidor de e-mail (SMTP). &quot;
-                &quot;Provavelmente falta conexão com a internet.&quot;,
-                &quot;Verifique sua conexão com a internet. Se o problema &quot;
-                &quot;persistir, teste em outra rede.&quot;,
-            ),
-            (
-                (&quot;timed out&quot;, &quot;timeout&quot;, &quot;slow&quot;),
-                &quot;O servidor de e-mail demorou demais para responder (timeout).&quot;,
-                &quot;Tente novamente mais tarde. Verifique se o firewall/antivírus &quot;
-                &quot;não está bloqueando a porta SMTP (587).&quot;,
-            ),
-        ],
-        &quot;TWILIO&quot;: [
-            (
-                (&quot;401&quot;, &quot;unauthorized&quot;, &quot;authenticate&quot;, &quot;credentials&quot;),
-                &quot;As credenciais da Twilio (Account SID / Auth Token) estão &quot;
-                &quot;inválidas.&quot;,
-                &quot;Revise o Account SID e o Auth Token em &quot;
-                &quot;https://console.twilio.com e atualize as configurações.&quot;,
-            ),
-            (
-                (&quot;errno -2&quot;, &quot;name or service not known&quot;, &quot;dns&quot;,
-                 &quot;getaddrinfo&quot;, &quot;temporarily unable&quot;, &quot;connection&quot;),
-                &quot;Não foi possível conectar à API da Twilio. Provavelmente &quot;
-                &quot;falta conexão com a internet.&quot;,
-                &quot;Verifique sua conexão com a internet.&quot;,
-            ),
-            (
-                (&quot;timed out&quot;, &quot;timeout&quot;, &quot;slow&quot;),
-                &quot;A API da Twilio demorou demais para responder (timeout).&quot;,
-                &quot;Tente novamente mais tarde.&quot;,
-            ),
-        ],
         &quot;IMAGEM&quot;: [
             (
                 (&quot;cannot identify&quot;, &quot;not an image&quot;, &quot;cannot open&quot;,
@@ -2694,182 +2636,9 @@ def limpar_logs_erros():
         pass
 
 
-def enviar_alerta_seguranca(area, motivo):
-    &quot;&quot;&quot;Envia alertas por E-mail e WhatsApp/SMS se os dados estiverem preenchidos.&quot;&quot;&quot;
-    dh = datetime.now().strftime(&quot;%d/%m/%Y às %H:%M:%S&quot;)
-
-    # Recupera credenciais da Session State
-    email_ativo = st.session_state.get(&quot;cfg_email_ativo&quot;, False)
-    email_remetente = st.session_state.get(&quot;cfg_email_remetente&quot;, &quot;&quot;).strip()
-    email_senha = st.session_state.get(&quot;cfg_email_senha&quot;, &quot;&quot;).strip()
-    email_destinatario = st.session_state.get(
-        &quot;cfg_email_destinatario&quot;, &quot;&quot;
-    ).strip()
-
-    twilio_ativo = st.session_state.get(&quot;cfg_twilio_ativo&quot;, False)
-    twilio_sid = st.session_state.get(&quot;cfg_twilio_sid&quot;, &quot;&quot;).strip()
-    twilio_token = st.session_state.get(&quot;cfg_twilio_token&quot;, &quot;&quot;).strip()
-    twilio_de = st.session_state.get(&quot;cfg_twilio_de&quot;, &quot;&quot;).strip()
-    twilio_para = st.session_state.get(&quot;cfg_twilio_para&quot;, &quot;&quot;).strip()
-
-    provedor = st.session_state.get(&quot;cfg_email_provedor&quot;, &quot;Gmail&quot;)
-    smtp_host = st.session_state.get(&quot;cfg_email_smtp_host&quot;, &quot;&quot;).strip()
-    smtp_port = st.session_state.get(&quot;cfg_email_smtp_port&quot;, &quot;&quot;).strip()
-    smtp_login = st.session_state.get(&quot;cfg_email_smtp_login&quot;, &quot;&quot;).strip()
-    host, port_padrao = PRESETS_SMTP.get(provedor, PRESETS_SMTP[&quot;Gmail&quot;])
-    if not smtp_host:
-        smtp_host = host
-    if not smtp_port:
-        smtp_port = port_padrao
-    if not smtp_login:
-        smtp_login = email_remetente
-
-    # 1. Disparo por E-mail (SMTP Gmail/Outlook/Brevo)
-    if (
-        email_ativo
-        and email_remetente
-        and email_senha
-        and email_destinatario
-    ):
-        try:
-            corpo_email = f&quot;ALERTA DE SEGURANÇA - FALHA DE ACESSO AO COFRE\n\nCompartimento do Cofre: {area}\nData/Hora: {dh}\nDetalhes: {motivo}&quot;
-            msg = MIMEText(corpo_email)
-            msg[&quot;Subject&quot;] = f&quot;🚨 ALERTA: Falha de Acesso ao compartimento do cofre {area}&quot;
-            msg[&quot;From&quot;] = email_remetente
-            msg[&quot;To&quot;] = email_destinatario
-
-            server = smtplib.SMTP(smtp_host, int(smtp_port))
-            server.starttls()
-            server.login(smtp_login, email_senha)
-            server.sendmail(
-                email_remetente, [email_destinatario], msg.as_string()
-            )
-            server.quit()
-            st.toast(&quot;📩 Alerta enviado por E-mail!&quot;, icon=&quot;📧&quot;)
-        except Exception as e:
-            registrar_erro(&quot;EMAIL&quot;, &quot;Alerta E-mail&quot;, str(e))
-            msg_erro = str(e).lower()
-            if &quot;535&quot; in msg_erro or &quot;badcredentials&quot; in msg_erro:
-                if provedor == &quot;Brevo&quot;:
-                    dica = (
-                        &quot;\n\n💡 **Credenciais inválidas**: no **Brevo**, confira se &quot;
-                        &quot;copiou a **SMTP key** no campo *Senha de App*, se o **SMTP &quot;
-                        &quot;Login** está preenchido e se o **Remetente** foi confirmado &quot;
-                        &quot;(e-mail de verificação enviado pelo Brevo).&quot;
-                    )
-                elif provedor == &quot;Outlook&quot;:
-                    dica = (
-                        &quot;\n\n💡 **Credenciais inválidas**: no **Outlook**, use a senha &quot;
-                        &quot;da conta ou uma senha de aplicativo e confira o **Remetente** &quot;
-                        &quot;e o **SMTP Login**.&quot;
-                    )
-                else:
-                    dica = (
-                        &quot;\n\n💡 **Credenciais inválidas**: confira se a **Senha de App &quot;
-                        &quot;do Gmail** (16 caracteres) foi gerada em Conta Google → &quot;
-                        &quot;Segurança → Verificação em 2 etapas → **Senhas de App** e &quot;
-                        &quot;colada corretamente, e se o **Remetente** é a conta que criou &quot;
-                        &quot;essa senha.&quot;
-                    )
-            elif (
-                &quot;connection&quot; in msg_erro
-                or &quot;timed out&quot; in msg_erro
-                or &quot;refused&quot; in msg_erro
-                or &quot;socket&quot; in msg_erro
-            ):
-                dica = (
-                    f&quot;\n\n💡 **Falha de conexão** com o servidor SMTP &quot;
-                    f&quot;({smtp_host}:{smtp_port}). Verifique sua conexão com a internet &quot;
-                    &quot;e as configurações de Host/Porta.&quot;
-                )
-            else:
-                dica = &quot;&quot;
-            st.warning(
-                f&quot;Erro ao enviar e-mail de alerta: {e}{dica}\n\n&quot;
-                &quot;Registrado na aba 🐞 Registro de Erros para ajuda.&quot;
-            )
-    elif email_ativo:
-        faltam = []
-        if not email_remetente:
-            faltam.append(&quot;Seu E-mail (Remetente)&quot;)
-        if not email_senha:
-            faltam.append(&quot;Senha de App&quot;)
-        if not email_destinatario:
-            faltam.append(&quot;E-mail do Responsável&quot;)
-        st.warning(
-            &quot;⚠️ Alerta E-mail ativado, mas a configuração está incompleta. &quot;
-            f&quot;Faltam: {&#x27;, &#x27;.join(faltam)}. Preencha em ⚙️ Configurar Notificações.&quot;
-        )
-
-    # 2. Disparo por WhatsApp/SMS (Twilio API)
-    if twilio_ativo and twilio_sid and twilio_token and twilio_de and twilio_para:
-        try:
-            msg_txt = f&quot;🚨 *ALERTA DE SEGURANÇA*\n\nTentativa de acesso negada!\n- *Compartimento do Cofre:* {area}\n- *Data/Hora:* {dh}\n- *Motivo:* {motivo}&quot;
-            url = f&quot;https://api.twilio.com/2010-04-01/Accounts/{twilio_sid}/Messages.json&quot;
-            data = {&quot;From&quot;: twilio_de, &quot;To&quot;: twilio_para, &quot;Body&quot;: msg_txt}
-            resp = requests.post(
-                url, data=data, auth=(twilio_sid, twilio_token)
-            )
-            if resp.status_code in [200, 201]:
-                st.toast(&quot;📱 Alerta enviado por WhatsApp/SMS!&quot;, icon=&quot;📲&quot;)
-            else:
-                registrar_erro(
-                    &quot;TWILIO&quot;,
-                    &quot;Alerta WhatsApp/SMS&quot;,
-                    f&quot;HTTP {resp.status_code}: {resp.text}&quot;,
-                )
-                st.warning(&quot;Erro na resposta da Twilio (registrado nos logs).&quot;)
-        except Exception as e:
-            registrar_erro(&quot;TWILIO&quot;, &quot;Alerta WhatsApp/SMS&quot;, str(e))
-            st.warning(
-                f&quot;Erro ao enviar mensagem Twilio: {e}\n\n&quot;
-                &quot;Registrado na aba 🐞 Registro de Erros para ajuda.&quot;
-            )
-    elif twilio_ativo:
-        faltam_t = []
-        if not twilio_sid:
-            faltam_t.append(&quot;Account SID&quot;)
-        if not twilio_token:
-            faltam_t.append(&quot;Auth Token&quot;)
-        if not twilio_de:
-            faltam_t.append(&quot;Número Twilio (De)&quot;)
-        if not twilio_para:
-            faltam_t.append(&quot;Seu WhatsApp (Para)&quot;)
-        st.warning(
-            &quot;⚠️ Alerta Twilio ativado, mas a configuração está incompleta. &quot;
-            f&quot;Faltam: {&#x27;, &#x27;.join(faltam_t)}. Preencha em ⚙️ Configurar Notificações.&quot;
-        )
 
 
-def _config_alertas_pronta():
-    &quot;&quot;&quot;Confere e avisa se a configuração de e-mail está pronta para envio.&quot;&quot;&quot;
-    email_ativo = st.session_state.get(&quot;cfg_email_ativo&quot;, False)
-    email_remetente = st.session_state.get(&quot;cfg_email_remetente&quot;, &quot;&quot;).strip()
-    email_senha = st.session_state.get(&quot;cfg_email_senha&quot;, &quot;&quot;).strip()
-    email_destinatario = st.session_state.get(
-        &quot;cfg_email_destinatario&quot;, &quot;&quot;
-    ).strip()
-    if not email_ativo:
-        st.warning(
-            &quot;⚠️ Marque **Ativar Alerta E-mail** em ⚙️ Configurar Notificações &quot;
-            &quot;antes de enviar o teste.&quot;
-        )
-        return False
-    faltam = []
-    if not email_remetente:
-        faltam.append(&quot;Seu E-mail (Remetente)&quot;)
-    if not email_senha:
-        faltam.append(&quot;Senha de App&quot;)
-    if not email_destinatario:
-        faltam.append(&quot;E-mail do Responsável&quot;)
-    if faltam:
-        st.warning(
-            &quot;⚠️ Configuração de e-mail incompleta. Faltam: &quot;
-            + &quot;, &quot;.join(faltam)
-            + f&quot;. Preencha em ⚙️ Configurar Notificações.&quot;,
-        )
-        return False
-    return True
+
 
 
 def salvar_colaborador():
@@ -2877,6 +2646,8 @@ def salvar_colaborador():
     cargo = st.session_state.get(&quot;reg_cargo&quot;, &quot;&quot;).strip()
     divisao = st.session_state.get(&quot;reg_divisao&quot;, &quot;Sem divisão&quot;)
     nivel = st.session_state.get(&quot;reg_nivel&quot;, 1)
+    usuario = st.session_state.get(&quot;reg_usuario&quot;, &quot;&quot;).strip()
+    senha = st.session_state.get(&quot;reg_senha&quot;, &quot;&quot;)
     foto_bytes = st.session_state.get(&quot;foto_capturada_bytes&quot;, None)
 
     if not nome or foto_bytes is None:
@@ -2885,8 +2656,34 @@ def salvar_colaborador():
             &quot;⚠️ Preencha o Nome e tire/envie a Foto antes de cadastrar.&quot;,
         )
         return
+    if not usuario:
+        st.session_state[&quot;msg_status&quot;] = (
+            &quot;error&quot;,
+            &quot;⚠️ Defina o Usuário (login) do colaborador.&quot;,
+        )
+        return
+    if len(senha) &lt; 6:
+        st.session_state[&quot;msg_status&quot;] = (
+            &quot;error&quot;,
+            &quot;⚠️ A senha deve ter ao menos 6 caracteres.&quot;,
+        )
+        return
 
     try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute(
+            &quot;SELECT COUNT(*) FROM colaboradores WHERE usuario = ? COLLATE NOCASE&quot;,
+            (usuario,),
+        )
+        if cursor.fetchone()[0] &gt; 0:
+            conn.close()
+            st.session_state[&quot;msg_status&quot;] = (
+                &quot;error&quot;,
+                &quot;⚠️ Este usuário já está em uso por outro colaborador.&quot;,
+            )
+            return
+
         filename = (
             f&quot;{nome.replace(&#x27; &#x27;, &#x27;_&#x27;).lower()}_{int(datetime.now().timestamp())}.jpg&quot;
         )
@@ -2897,12 +2694,14 @@ def salvar_colaborador():
 
         recortar_centro_rosto(foto_path)
 
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
+        senha_hash = hash_senha(senha)
         data_hoje = datetime.now().strftime(&quot;%Y-%m-%d&quot;)
         cursor.execute(
-            &quot;INSERT INTO colaboradores (nome, cargo, divisao, nivel_acesso, foto_path, data_cadastro) VALUES (?, ?, ?, ?, ?, ?)&quot;,
-            (nome, cargo, divisao, nivel, foto_path, data_hoje),
+            &quot;INSERT INTO colaboradores &quot;
+            &quot;(nome, cargo, divisao, nivel_acesso, usuario, senha_hash, pode_cadastrar, &quot;
+            &quot;foto_path, data_cadastro) &quot;
+            &quot;VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)&quot;,
+            (nome, cargo, divisao, nivel, usuario, senha_hash, foto_path, data_hoje),
         )
 
         conn.commit()
@@ -2912,12 +2711,15 @@ def salvar_colaborador():
         st.session_state[&quot;reg_cargo&quot;] = &quot;&quot;
         st.session_state[&quot;reg_divisao&quot;] = &quot;Sem divisão&quot;
         st.session_state[&quot;reg_nivel&quot;] = 1
+        st.session_state[&quot;reg_usuario&quot;] = &quot;&quot;
+        st.session_state[&quot;reg_senha&quot;] = &quot;&quot;
         st.session_state.pop(&quot;foto_capturada_bytes&quot;, None)
 
         st.session_state[&quot;msg_status&quot;] = (
             &quot;success&quot;,
             f&quot;✅ Colaborador **{nome}** cadastrado com sucesso! &quot;
-            f&quot;Nível de acesso: **{rotulo_nivel(nivel)}**.&quot;,
+            f&quot;Nível de acesso: **{rotulo_nivel(nivel)}**. Credenciais criadas &quot;
+            f&quot;para o usuário **{usuario}**.&quot;,
         )
     except Exception as e:
         registrar_erro(&quot;BANCO&quot;, &quot;Cadastro de Colaborador&quot;, str(e))
@@ -2937,103 +2739,707 @@ def carregar_modelo_facial():
         return None
 
 
+# ---------------------------------------------------------------------------
+# AUTENTICAÇÃO POR CREDENCIAIS (usuário/senha)
+# ---------------------------------------------------------------------------
+def _autenticar(dados):
+    &quot;&quot;&quot;Valida as credenciais no banco e inicia a sessão. Retorna (ok, msg).&quot;&quot;&quot;
+    usuario = dados.get(&quot;login&quot;).strip()
+    senha = dados.get(&quot;senha&quot;)
+    if not usuario or not senha:
+        return False, &quot;Informe usuário e senha.&quot;
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cur = conn.cursor()
+        cur.execute(
+            &quot;SELECT id, nome, cargo, divisao, nivel_acesso, usuario, pode_cadastrar, senha_hash &quot;
+            &quot;FROM colaboradores &quot;
+            &quot;WHERE usuario = ? COLLATE NOCASE&quot;,
+            (usuario,),
+        )
+        linha = cur.fetchone()
+        conn.close()
+    except Exception as e:
+        registrar_erro(&quot;AUTENTICACAO&quot;, &quot;Login&quot;, str(e))
+        return False, &quot;Erro interno ao validar o login.&quot;
+    if linha is None or not verificar_senha(senha, linha[7]):
+        registrar_log(
+            &quot;Desconhecido&quot;,
+            &quot;Sistema – Login&quot;,
+            &quot;NEGADO&quot;,
+            {&quot;motivo&quot;: &quot;Credenciais inválidas&quot;, &quot;usuario_tentado&quot;: usuario},
+        )
+        return False, &quot;Usuário ou senha inválidos.&quot;
+    _id, _nome, _cargo, _divisao, _nivel, _usuario, _pode_cad, _ = linha
+    st.session_state.pop(&quot;sessao_expirada&quot;, None)
+    st.session_state[&quot;usuario_logado&quot;] = {
+        &quot;id&quot;: _id,
+        &quot;nome&quot;: _nome,
+        &quot;cargo&quot;: _cargo,
+        &quot;divisao&quot;: _divisao,
+        &quot;nivel_acesso&quot;: int(_nivel),
+        &quot;usuario&quot;: _usuario,
+        &quot;pode_cadastrar&quot;: int(_pode_cad or 0),
+        &quot;login_ts&quot;: time.time(),
+        &quot;metodo&quot;: &quot;credenciais&quot;,
+    }
+    st.session_state[&quot;autenticado&quot;] = True
+    registrar_log(
+        f&quot;{_nome} (login)&quot;,
+        rotulo_nivel(_nivel),
+        &quot;PERMITIDO&quot;,
+        {&quot;motivo&quot;: &quot;Login por credenciais&quot;},
+    )
+    return True, f&quot;Bem-vindo(a), {_nome}!&quot;
+
+
+def _encontrar_imagem_home():
+    &quot;&quot;&quot;Retorna o caminho da primeira imagem encontrada em IMAGEMHOME/ (ou None).&quot;&quot;&quot;
+    if not os.path.isdir(IMAGEMHOME_DIR):
+        return None
+    for f in os.listdir(IMAGEMHOME_DIR):
+        if f.lower().endswith(EXTENSOES_IMAGEM):
+            return os.path.join(IMAGEMHOME_DIR, f)
+    return None
+
+
+@st.cache_data
+def _imagem_home_base64(_caminho):
+    &quot;&quot;&quot;Codifica a imagem da home em base64 (cacheado).&quot;&quot;&quot;
+    with open(_caminho, &quot;rb&quot;) as f:
+        return base64.b64encode(f.read()).decode(&quot;ascii&quot;)
+
+
+def _zonas_home_default():
+    &quot;&quot;&quot;Zonas clicáveis padrão (percentuais sobre a imagem da home).&quot;&quot;&quot;
+    return [
+        {&quot;chave&quot;: &quot;campo&quot;, &quot;rotulo&quot;: &quot;Usuário e Senha&quot;, &quot;acao&quot;: &quot;login&quot;,
+         &quot;x&quot;: 62.0, &quot;y&quot;: 40.0, &quot;w&quot;: 22.0, &quot;h&quot;: 17.0},
+        {&quot;chave&quot;: &quot;acesso&quot;, &quot;rotulo&quot;: &quot;Acesso&quot;, &quot;acao&quot;: &quot;acesso&quot;,
+         &quot;x&quot;: 61.0, &quot;y&quot;: 57.0, &quot;w&quot;: 23.0, &quot;h&quot;: 10.0},
+        {&quot;chave&quot;: &quot;cadastro&quot;, &quot;rotulo&quot;: &quot;Cadastro&quot;, &quot;acao&quot;: &quot;cadastro&quot;,
+         &quot;x&quot;: 68.0, &quot;y&quot;: 67.0, &quot;w&quot;: 13.0, &quot;h&quot;: 10.0},
+        {&quot;chave&quot;: &quot;admin&quot;, &quot;rotulo&quot;: &quot;Criar Administrador&quot;, &quot;acao&quot;: &quot;admin&quot;,
+         &quot;x&quot;: 68.0, &quot;y&quot;: 77.0, &quot;w&quot;: 13.0, &quot;h&quot;: 10.0},
+    ]
+
+
+def _carregar_zonas_home():
+    &quot;&quot;&quot;Zonas salvas no banco (com fallback nos padrões).&quot;&quot;&quot;
+    zonas = _zonas_home_default()
+    linhas = []
+    try:
+        conexao = sqlite3.connect(DB_FILE)
+        linhas = conexao.execute(
+            &quot;SELECT chave, valor FROM configuracoes&quot;
+        ).fetchall()
+        conexao.close()
+    except Exception:
+        pass
+    por_chave = {z[&quot;chave&quot;]: z for z in zonas}
+    for chave, valor in linhas:
+        if not valor or not chave.startswith(&quot;home_zona_&quot;):
+            continue
+        k = chave[len(&quot;home_zona_&quot;):]
+        if k not in por_chave:
+            continue
+        partes = valor.split(&quot;;&quot;)
+        if len(partes) != 4:
+            continue
+        try:
+            x, y, w, h = (float(p.strip()) for p in partes)
+        except ValueError:
+            continue
+        z = por_chave[k]
+        z[&quot;x&quot;], z[&quot;y&quot;], z[&quot;w&quot;], z[&quot;h&quot;] = x, y, w, h
+    return zonas
+
+
+def _salvar_zonas_home(zonas):
+    &quot;&quot;&quot;Persiste as zonas ajustadas na tabela configuracoes.&quot;&quot;&quot;
+    conexao = None
+    try:
+        conexao = sqlite3.connect(DB_FILE)
+        for z in zonas:
+            conexao.execute(
+                &quot;INSERT INTO configuracoes (chave, valor) VALUES (?, ?) &quot;
+                &quot;ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor&quot;,
+                (
+                    f&quot;home_zona_{z[&#x27;chave&#x27;]}&quot;,
+                    f&quot;{z[&#x27;x&#x27;]};{z[&#x27;y&#x27;]};{z[&#x27;w&#x27;]};{z[&#x27;h&#x27;]}&quot;,
+                ),
+            )
+        conexao.commit()
+    finally:
+        if conexao:
+            conexao.close()
+
+
+def _montar_html_mascaras(b64, zonas, ajuste=False, valores=None):
+    &quot;&quot;&quot;Monta a imagem da home com as máscaras (links transparentes) sobre ela.&quot;&quot;&quot;
+    partes = [
+        &quot;&lt;style&gt;&quot;
+        &quot;.home-zona{position:absolute;cursor:pointer;z-index:5;border-radius:10px;}&quot;
+        &quot;.home-zona:hover{box-shadow:0 0 0 3px rgba(255,255,255,.5),&quot;
+        &quot;0 0 0 7px rgba(0,255,102,.4);}&quot;
+        &quot;.home-ajuste{position:absolute;z-index:6;border:2px dashed #00FF66;&quot;
+        &quot;background:rgba(0,255,102,.10);border-radius:10px;}&quot;
+        &quot;.home-ajuste span{position:absolute;top:-1.3em;left:0;font-size:.72rem;&quot;
+        &quot;color:#00FF66;background:rgba(0,0,0,.65);padding:1px 8px;border-radius:6px;&quot;
+        &quot;white-space:nowrap;}&quot;
+        &quot;&lt;/style&gt;&quot;,
+        &quot;&lt;div style=&#x27;position:relative;width:100%;max-width:1250px;margin:0 auto;&#x27;&gt;&quot;,
+    ]
+    if b64:
+        partes.append(
+            &quot;&lt;img src=&#x27;data:image/png;base64,%s&#x27; style=&#x27;width:100%%;border-radius:14px;&quot;
+            &quot;display:block;box-shadow:0 8px 30px rgba(0,0,0,.35);&#x27;&gt;&quot; % b64
+        )
+    for z in zonas:
+        if valores and z[&quot;chave&quot;] in valores:
+            x, y, w, h = valores[z[&quot;chave&quot;]]
+        else:
+            x, y, w, h = z[&quot;x&quot;], z[&quot;y&quot;], z[&quot;w&quot;], z[&quot;h&quot;]
+        estilo = (
+            &quot;position:absolute;left:%.1f%%;top:%.1f%%;width:%.1f%%;height:%.1f%%&quot;
+            % (x, y, w, h)
+        )
+        if ajuste:
+            partes.append(
+                &quot;&lt;div class=&#x27;home-ajuste&#x27; style=&#x27;%s&#x27;&gt;&quot;
+                &quot;&lt;span&gt;%s&lt;/span&gt;&lt;/div&gt;&quot; % (estilo, z[&quot;rotulo&quot;])
+            )
+        else:
+            partes.append(
+                &quot;&lt;a href=&#x27;?acao=%s&#x27; class=&#x27;home-zona&#x27; style=&#x27;%s&#x27; &quot;
+                &quot;aria-label=&#x27;%s&#x27; title=&#x27;%s&#x27;&gt;&lt;/a&gt;&quot;
+                % (z[&quot;acao&quot;], estilo, z[&quot;rotulo&quot;], z[&quot;rotulo&quot;])
+            )
+    partes.append(&quot;&lt;/div&gt;&quot;)
+    return &quot;&quot;.join(partes)
+
+
+def _tratar_acao_home():
+    &quot;&quot;&quot;Processa cliques das máscaras e do modo de ajuste (via query param).&quot;&quot;&quot;
+    _acao = st.query_params.get(&quot;acao&quot;) or st.session_state.pop(&quot;acao_home&quot;, None)
+    _ajustar = st.query_params.get(&quot;ajustar&quot;)
+    _sair = st.query_params.get(&quot;ajuste_sair&quot;)
+    if _acao:
+        if _acao == &quot;acesso&quot;:
+            st.session_state[&quot;home_tela&quot;] = &quot;acesso&quot;
+        elif _acao in (&quot;cadastro&quot;, &quot;login&quot;):
+            st.session_state[&quot;home_tela&quot;] = &quot;cadastro&quot;
+        elif _acao == &quot;admin&quot;:
+            st.session_state[&quot;home_tela&quot;] = &quot;criar_admin&quot;
+        st.session_state.pop(&quot;modo_ajuste&quot;, None)
+        st.query_params.clear()
+        st.rerun()
+        return
+    if _ajustar:
+        st.session_state[&quot;modo_ajuste&quot;] = True
+        st.query_params.clear()
+        st.rerun()
+        return
+    if _sair:
+        st.session_state[&quot;modo_ajuste&quot;] = False
+        st.query_params.clear()
+        st.rerun()
+
+
+def _render_home_fallback():
+    &quot;&quot;&quot;Home sem imagem: botões textuais (fallback seguro).&quot;&quot;&quot;
+    st.markdown(
+        &quot;&lt;h1 style=&#x27;text-align:center&#x27;&gt;🔐 Cofre de Toxinas&lt;/h1&gt;&quot;,
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        &quot;&lt;p style=&#x27;text-align:center;color:#888&#x27;&gt;Ministério do Meio Ambiente — &quot;
+        &quot;controle de acesso ao cofre de segurança máxima.&lt;/p&gt;&quot;,
+        unsafe_allow_html=True,
+    )
+    st.divider()
+
+    _sem_creds = not existe_usuario_com_credenciais()
+    _cols = st.columns(3) if _sem_creds else st.columns(2)
+
+    with _cols[0]:
+        with st.container(border=True):
+            st.markdown(&quot;### 📸 Cadastro&quot;)
+            st.caption(
+                &quot;Registre colaboradores, fotos e permissões. **Somente** &quot;
+                &quot;colaboradores autorizados (❌ permissão de cadastro).&quot;
+            )
+            if st.button(&quot;Cadastrar&quot;, width=&quot;stretch&quot;, type=&quot;primary&quot;, key=&quot;home_cadastro&quot;):
+                st.session_state[&quot;home_tela&quot;] = &quot;cadastro&quot;
+                st.rerun()
+
+    with _cols[1]:
+        with st.container(border=True):
+            st.markdown(&quot;### 🔐 Acesso&quot;)
+            st.caption(
+                &quot;Valide o acesso ao cofre por reconhecimento facial. &quot;
+                &quot;Colaboradores com cadastro entram conforme o nível.&quot;
+            )
+            if st.button(&quot;Acessar&quot;, width=&quot;stretch&quot;, type=&quot;primary&quot;, key=&quot;home_acesso&quot;):
+                st.session_state[&quot;home_tela&quot;] = &quot;acesso&quot;
+                st.rerun()
+
+    if _sem_creds:
+        with _cols[2]:
+            with st.container(border=True):
+                st.markdown(&quot;### 🛡️ Primeiro Acesso&quot;)
+                st.caption(
+                    &quot;Nenhuma credencial cadastrada: crie a conta do &quot;
+                    &quot;administrador do sistema (nível 3).&quot;
+                )
+                if st.button(
+                    &quot;Criar Administrador&quot;, width=&quot;stretch&quot;, type=&quot;secondary&quot;, key=&quot;home_admin&quot;
+                ):
+                    st.session_state[&quot;home_tela&quot;] = &quot;criar_admin&quot;
+                    st.rerun()
+
+
+def _render_ajuste_mascaras():
+    &quot;&quot;&quot;Modo de ajuste visual das máscaras sobre a imagem da home.&quot;&quot;&quot;
+    st.title(&quot;⚙️ Ajuste da Home (áreas clicáveis)&quot;)
+    st.caption(
+        &quot;Use os controles abaixo para mover/redimensionar cada máscara até ela &quot;
+        &quot;cobrir o elemento correspondente na imagem. Depois clique em &quot;
+        &quot;**💾 Salvar posições**.&quot;
+    )
+    _img = _encontrar_imagem_home()
+    _b64 = _imagem_home_base64(_img) if _img else None
+
+    _sem_creds = not existe_usuario_com_credenciais()
+    zonas = [
+        z for z in _carregar_zonas_home()
+        if z[&quot;chave&quot;] != &quot;admin&quot; or _sem_creds
+    ]
+
+    for z in zonas:
+        _base = f&quot;mask_{z[&#x27;chave&#x27;]}&quot;
+        st.session_state.setdefault(f&quot;{_base}_x&quot;, z[&quot;x&quot;])
+        st.session_state.setdefault(f&quot;{_base}_y&quot;, z[&quot;y&quot;])
+        st.session_state.setdefault(f&quot;{_base}_w&quot;, z[&quot;w&quot;])
+        st.session_state.setdefault(f&quot;{_base}_h&quot;, z[&quot;h&quot;])
+
+    valores = {}
+    for z in zonas:
+        _base = f&quot;mask_{z[&#x27;chave&#x27;]}&quot;
+        valores[z[&quot;chave&quot;]] = (
+            st.session_state[f&quot;{_base}_x&quot;],
+            st.session_state[f&quot;{_base}_y&quot;],
+            st.session_state[f&quot;{_base}_w&quot;],
+            st.session_state[f&quot;{_base}_h&quot;],
+        )
+
+    if _b64:
+        st.markdown(
+            _montar_html_mascaras(_b64, zonas, ajuste=True, valores=valores),
+            unsafe_allow_html=True,
+        )
+    else:
+        st.warning(
+            &quot;⚠️ Nenhuma imagem encontrada em `IMAGEMHOME/`. As áreas de ajuste &quot;
+            &quot;não têm referência visual.&quot;
+        )
+
+    st.divider()
+    defaults = {z[&quot;chave&quot;]: z for z in _zonas_home_default()}
+    for u in zonas:
+        _base = f&quot;mask_{u[&#x27;chave&#x27;]}&quot;
+        with st.container(border=True):
+            st.markdown(f&quot;**{u[&#x27;rotulo&#x27;]}**&quot;)
+            c1, c2, c3, c4 = st.columns(4)
+            c1.slider(&quot;X (%)&quot;, 0.0, 100.0, key=f&quot;{_base}_x&quot;, step=0.5)
+            c2.slider(&quot;Y (%)&quot;, 0.0, 100.0, key=f&quot;{_base}_y&quot;, step=0.5)
+            c3.slider(&quot;Largura (%)&quot;, 0.0, 100.0, key=f&quot;{_base}_w&quot;, step=0.5)
+            c4.slider(&quot;Altura (%)&quot;, 0.0, 100.0, key=f&quot;{_base}_h&quot;, step=0.5)
+            if st.button(&quot;↺ Restaurar padrão desta zona&quot;, key=f&quot;{_base}_reset&quot;):
+                st.session_state[f&quot;{_base}_x&quot;] = defaults[u[&quot;chave&quot;]][&quot;x&quot;]
+                st.session_state[f&quot;{_base}_y&quot;] = defaults[u[&quot;chave&quot;]][&quot;y&quot;]
+                st.session_state[f&quot;{_base}_w&quot;] = defaults[u[&quot;chave&quot;]][&quot;w&quot;]
+                st.session_state[f&quot;{_base}_h&quot;] = defaults[u[&quot;chave&quot;]][&quot;h&quot;]
+                st.rerun()
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        if st.button(&quot;💾 Salvar posições&quot;, type=&quot;primary&quot;, width=&quot;stretch&quot;):
+            _novas = []
+            for u in zonas:
+                _base = f&quot;mask_{u[&#x27;chave&#x27;]}&quot;
+                _novas.append({
+                    &quot;chave&quot;: u[&quot;chave&quot;], &quot;rotulo&quot;: u[&quot;rotulo&quot;], &quot;acao&quot;: u[&quot;acao&quot;],
+                    &quot;x&quot;: float(st.session_state[f&quot;{_base}_x&quot;]),
+                    &quot;y&quot;: float(st.session_state[f&quot;{_base}_y&quot;]),
+                    &quot;w&quot;: float(st.session_state[f&quot;{_base}_w&quot;]),
+                    &quot;h&quot;: float(st.session_state[f&quot;{_base}_h&quot;]),
+                })
+            _salvar_zonas_home(_novas)
+            st.success(&quot;✅ Posições salvas!&quot;)
+    with c2:
+        if st.button(&quot;↩ Restaurar padrão e salvar&quot;, width=&quot;stretch&quot;):
+            _novas = []
+            for u in zonas:
+                p = defaults[u[&quot;chave&quot;]]
+                _novas.append({
+                    &quot;chave&quot;: u[&quot;chave&quot;], &quot;rotulo&quot;: u[&quot;rotulo&quot;], &quot;acao&quot;: u[&quot;acao&quot;],
+                    &quot;x&quot;: p[&quot;x&quot;], &quot;y&quot;: p[&quot;y&quot;], &quot;w&quot;: p[&quot;w&quot;], &quot;h&quot;: p[&quot;h&quot;],
+                })
+            _salvar_zonas_home(_novas)
+            st.success(&quot;✅ Padrão restaurado e salvo!&quot;)
+    with c3:
+        if st.button(&quot;✅ Concluir&quot;, width=&quot;stretch&quot;):
+            st.session_state[&quot;modo_ajuste&quot;] = False
+            st.rerun()
+
+
+def _render_home():
+    &quot;&quot;&quot;Tela inicial (pré-login) com máscaras clicáveis sobre a imagem.&quot;&quot;&quot;
+    st.markdown(HOME_CSS, unsafe_allow_html=True)
+    _tratar_acao_home()
+    if st.session_state.get(&quot;modo_ajuste&quot;):
+        _render_ajuste_mascaras()
+        return
+    _img = _encontrar_imagem_home()
+    if not _img:
+        _render_home_fallback()
+        return
+    _b64 = _imagem_home_base64(_img)
+    _sem_creds = not existe_usuario_com_credenciais()
+    zonas = [
+        z for z in _carregar_zonas_home()
+        if z[&quot;chave&quot;] != &quot;admin&quot; or _sem_creds
+    ]
+    st.markdown(_montar_html_mascaras(_b64, zonas), unsafe_allow_html=True)
+    st.markdown(
+        &quot;&lt;p style=&#x27;text-align:center;font-size:.85rem;color:#888&#x27;&gt;&quot;
+        &quot;Clique sobre os elementos da tela para acessar o sistema.&lt;/p&gt;&quot;,
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        &quot;[⚙️ Ajustar áreas clicáveis](?ajustar=1) — &quot;
+        &quot;para administradores; requer cuidado.&quot;
+    )
+
+
+def _render_login(destino=None):
+    &quot;&quot;&quot;Tela de login por usuário/senha.&quot;&quot;&quot;
+    if st.button(&quot;← Voltar ao Início&quot;, key=&quot;voltar_login&quot;):
+        st.session_state[&quot;home_tela&quot;] = &quot;home&quot;
+        st.rerun()
+    st.markdown(
+        &quot;&lt;h1 style=&#x27;text-align:center&#x27;&gt;🔐 Cofre de Toxinas — Ministério do Meio Ambiente&lt;/h1&gt;&quot;,
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        &quot;&lt;p style=&#x27;text-align:center;color:#888&#x27;&gt;Acesso restrito — identifique-se &quot;
+        &quot;para continuar.&lt;/p&gt;&quot;,
+        unsafe_allow_html=True,
+    )
+    st.divider()
+    with st.form(&quot;login_credenciais&quot;, clear_on_submit=False):
+        usuario = st.text_input(&quot;Usuário:&quot;, key=&quot;login_usuario&quot;)
+        senha = st.text_input(&quot;Senha:&quot;, type=&quot;password&quot;, key=&quot;login_senha&quot;)
+        enviar = st.form_submit_button(&quot;🔓 Entrar no Sistema&quot;, type=&quot;primary&quot;)
+    if enviar:
+        ok, msg = _autenticar({&quot;login&quot;: usuario, &quot;senha&quot;: senha})
+        if ok:
+            _aut = st.session_state.get(&quot;usuario_logado&quot;, {})
+            if destino == &quot;cadastro&quot; and not _aut.get(&quot;pode_cadastrar&quot;):
+                st.session_state[&quot;home_aviso&quot;] = (
+                    &quot;⚠️ Você não possui **permissão de cadastro**. Ela é &quot;
+                    &quot;concedida pelo nível 3 na aba 🛡️ Gestão de Acessos.&quot;
+                )
+                st.session_state[&quot;redirecionar_para&quot;] = &quot;🔐 Cofre de Toxinas do MMA&quot;
+            elif destino == &quot;cadastro&quot;:
+                st.session_state[&quot;redirecionar_para&quot;] = &quot;📸 Cadastro de Colaboradores&quot;
+            else:
+                st.session_state[&quot;redirecionar_para&quot;] = &quot;🔐 Cofre de Toxinas do MMA&quot;
+            st.rerun()
+        else:
+            st.error(f&quot;🚫 **Acesso negado.** {msg}&quot;)
+
+
+def _render_criar_admin():
+    &quot;&quot;&quot;Primeira execução: cria o usuário administrador inicial (nível 3).&quot;&quot;&quot;
+    if st.button(&quot;← Voltar ao Início&quot;, key=&quot;voltar_admin&quot;):
+        st.session_state[&quot;home_tela&quot;] = &quot;home&quot;
+        st.rerun()
+    st.markdown(
+        &quot;&lt;h1 style=&#x27;text-align:center&#x27;&gt;🛡️ Criar Primeiro Administrador&lt;/h1&gt;&quot;,
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        &quot;&lt;p style=&#x27;text-align:center;color:#888&#x27;&gt;Nenhum usuário com credenciais &quot;
+        &quot;foi encontrado. Crie a conta inicial do administrador do sistema &quot;
+        &quot;(nível 3 — Ministro, com permissão de cadastro).&lt;/p&gt;&quot;,
+        unsafe_allow_html=True,
+    )
+    st.divider()
+    with st.form(&quot;criar_admin_form&quot;, clear_on_submit=False):
+        nome = st.text_input(&quot;Nome Completo do Administrador:*&quot;, key=&quot;adm_nome&quot;)
+        cargo = st.text_input(&quot;Cargo / Função:&quot;, key=&quot;adm_cargo&quot;)
+        usuario = st.text_input(&quot;Usuário (login):*&quot;, key=&quot;adm_usuario&quot;)
+        senha = st.text_input(&quot;Senha:*&quot;, type=&quot;password&quot;, key=&quot;adm_senha&quot;)
+        senha2 = st.text_input(&quot;Confirmar Senha:*&quot;, type=&quot;password&quot;, key=&quot;adm_senha2&quot;)
+        criar = st.form_submit_button(&quot;✅ Criar Administrador&quot;, type=&quot;primary&quot;)
+
+    if criar:
+        nome = nome.strip()
+        usuario = (usuario or &quot;&quot;).strip()
+        if not nome or not usuario:
+            st.error(&quot;⚠️ Preencha Nome Completo e Usuário.&quot;)
+            return
+        if len(senha) &lt; 6:
+            st.error(&quot;⚠️ A senha deve ter ao menos 6 caracteres.&quot;)
+            return
+        if senha != senha2:
+            st.error(&quot;⚠️ As senhas não conferem.&quot;)
+            return
+        try:
+            conn = sqlite3.connect(DB_FILE)
+            cur = conn.cursor()
+            cur.execute(
+                &quot;SELECT COUNT(*) FROM colaboradores WHERE usuario = ? COLLATE NOCASE&quot;,
+                (usuario,),
+            )
+            if cur.fetchone()[0] &gt; 0:
+                conn.close()
+                st.error(&quot;⚠️ Este usuário já está em uso.&quot;)
+                return
+            senha_hash = hash_senha(senha)
+            data_hoje = datetime.now().strftime(&quot;%Y-%m-%d&quot;)
+            cur.execute(
+                &quot;INSERT INTO colaboradores &quot;
+                &quot;(nome, cargo, divisao, nivel_acesso, usuario, senha_hash, pode_cadastrar, &quot;
+                &quot;foto_path, data_cadastro) &quot;
+                &quot;VALUES (?, ?, &#x27;Sem divisão&#x27;, 3, ?, ?, 1, &#x27;&#x27;, ?)&quot;,
+                (nome, cargo, usuario, senha_hash, data_hoje),
+            )
+            novo_id = cur.lastrowid
+            conn.commit()
+            conn.close()
+            st.session_state.pop(&quot;sessao_expirada&quot;, None)
+            st.session_state[&quot;usuario_logado&quot;] = {
+                &quot;id&quot;: novo_id,
+                &quot;nome&quot;: nome,
+                &quot;cargo&quot;: cargo,
+                &quot;divisao&quot;: &quot;Sem divisão&quot;,
+                &quot;nivel_acesso&quot;: 3,
+                &quot;usuario&quot;: usuario,
+                &quot;pode_cadastrar&quot;: 1,
+                &quot;login_ts&quot;: time.time(),
+                &quot;metodo&quot;: &quot;credenciais&quot;,
+            }
+            st.session_state[&quot;autenticado&quot;] = True
+            st.success(
+                f&quot;✅ Administrador **{nome}** criado e autenticado! &quot;
+                &quot;Você já pode cadastrar os demais colaboradores.&quot;
+            )
+            st.rerun()
+        except Exception as e:
+            registrar_erro(&quot;AUTENTICACAO&quot;, &quot;Criar Administrador&quot;, str(e))
+            st.error(
+                f&quot;❌ Erro ao criar o administrador. Veja a aba 🐞 Registro de &quot;
+                f&quot;Erros para ajuda. ({e})&quot;
+            )
+
+
+def _encerrar_sessao():
+    st.session_state.pop(&quot;usuario_logado&quot;, None)
+    st.session_state.pop(&quot;autenticado&quot;, None)
+    st.session_state.pop(&quot;sessao_expirada&quot;, None)
+    st.session_state.pop(&quot;live_frames&quot;, None)
+    st.session_state.pop(&quot;redirecionar_para&quot;, None)
+    st.session_state.pop(&quot;home_aviso&quot;, None)
+    st.session_state[&quot;home_tela&quot;] = &quot;home&quot;
+
+
+def _aba_simulacao():
+    &quot;&quot;&quot;Validação biométrica / login ao cofre (acessível com ou sem credenciais).&quot;&quot;&quot;
+    st.markdown(MOLDURA_CIRCULAR_CSS, unsafe_allow_html=True)
+    st.title(&quot;📹 Validação Biométrica / Login ao Cofre de Toxinas&quot;)
+
+    if not _sessao_valida():
+        st.info(
+            &quot;Registro facial reconhecido inicia sua sessão no sistema &quot;
+            &quot;(colaboradores cadastrados antes do novo esquema de credenciais &quot;
+            &quot;ainda podem acessar por aqui).&quot;
+        )
+
+    nivel_requerido = st.selectbox(
+        &quot;Selecione o nível do compartimento do cofre sendo acessado:&quot;,
+        options=list(NIVEIS_ACESSO.keys()),
+        format_func=rotulo_nivel,
+    )
+    area_requerida = rotulo_nivel(nivel_requerido)
+    st.markdown(
+        f&quot;**Status da Câmera:** Monitorando o acesso ao compartimento &quot;
+        f&quot;**[{area_requerida}]** do cofre.&quot;
+    )
+
+    bloq, minutos = _bloqueio_ativo(area_requerida)
+    if bloq:
+        st.error(
+            f&quot;⛔ **BLOQUEIO TEMPORÁRIO ATIVADO**\n\nO compartimento &quot;
+            f&quot;**{area_requerida}** está com a validação **suspensa por &quot;
+            f&quot;~{minutos} min** após tentativas repetidas de fraude ou &quot;
+            f&quot;acesso indevido foi registrado para auditoria.&quot;
+        )
+        tent_linhas = _tentativas_recentes(area_requerida)
+        if tent_linhas:
+            st.dataframe(pd.DataFrame(tent_linhas), width=&quot;stretch&quot;)
+        return
+
+    metodo_leitura = st.radio(
+        &quot;Origem da imagem:&quot;,
+        [
+            &quot;Tirar Foto pela Webcam&quot;,
+            &quot;🎥 Mini Vídeo Anti-Fraude (mova o rosto)&quot;,
+        ],
+        key=&quot;metodo_leitura_radio&quot;,
+    )
+
+    if metodo_leitura == &quot;🎥 Mini Vídeo Anti-Fraude (mova o rosto)&quot;:
+        _render_mini_video(nivel_requerido, area_requerida)
+        return
+
+    input_test = st.camera_input(
+        &quot;Centralize o rosto no círculo para leitura&quot;
+    )
+
+    if input_test is not None:
+        test_bytes = input_test.getvalue()
+        temp_test_path = &quot;temp_test.jpg&quot;
+        with open(temp_test_path, &quot;wb&quot;) as f:
+            f.write(test_bytes)
+
+        recortar_centro_rosto(temp_test_path)
+
+        try:
+            carregar_modelo_facial()
+            with st.spinner(&quot;Validando biometria facial...&quot;):
+                melhor_candidato, menor_distancia = _melhor_match_biometrico(
+                    temp_test_path
+                )
+
+            if os.path.exists(temp_test_path):
+                os.remove(temp_test_path)
+
+            if melhor_candidato is not None and menor_distancia &lt;= 0.35:
+                colab_id, colab_nome = melhor_candidato
+                _conceder_ou_negar(
+                    colab_id,
+                    colab_nome,
+                    menor_distancia,
+                    nivel_requerido,
+                    area_requerida,
+                )
+            else:
+                st.error(
+                    f&quot;🚨 **ACESSO NEGADO!** Biometria não bateu com nenhum cadastrado. (Menor distância calculada: {menor_distancia:.3f})&quot;
+                )
+                registrar_log(
+                    &quot;Desconhecido&quot;,
+                    area_requerida,
+                    &quot;NEGADO&quot;,
+                    {&quot;motivo&quot;: &quot;Biometria não reconhecida (foto)&quot;},
+                )
+                _registrar_e_verificar_bloqueio(
+                    area_requerida,
+                    &quot;Biometria não reconhecida (foto).&quot;,
+                    origem=&quot;foto&quot;,
+                )
+
+
+
+        except Exception as e:
+            registrar_erro(&quot;GERAL&quot;, &quot;Validação de Acesso&quot;, str(e))
+            st.error(
+                f&quot;❌ Ocorreu um erro inesperado na validação de acesso. Veja &quot;
+                f&quot;a aba 🐞 Registro de Erros para ajuda. ({e})&quot;
+            )
+
+
 st.sidebar.title(&quot;🔐 Cofre de Toxinas&quot;)
+
+_sessao_ok = _sessao_valida()
+_usuario_sidebar = st.session_state.get(&quot;usuario_logado&quot;)
+
+if not _sessao_ok:
+    if _usuario_sidebar and st.session_state.get(&quot;sessao_expirada&quot;):
+        st.sidebar.warning(
+            &quot;⏱️ **Sessão expirada por inatividade.**\nFaça login novamente.&quot;
+        )
+        st.session_state.pop(&quot;sessao_expirada&quot;, None)
+    else:
+        st.sidebar.info(&quot;🔴 Nenhuma sessão ativa.&quot;)
+    st.sidebar.caption(
+        &quot;🔒 Áreas sensíveis seguem as permissões por nível. Colaboradores &quot;
+        &quot;cadastrados antes do novo esquema entram pela biometria.&quot;
+    )
+
+    if &quot;home_tela&quot; not in st.session_state:
+        st.session_state[&quot;home_tela&quot;] = &quot;home&quot;
+    _tela = st.session_state[&quot;home_tela&quot;]
+
+    if _tela == &quot;home&quot;:
+        _render_home()
+    elif _tela == &quot;cadastro&quot;:
+        _render_login(destino=&quot;cadastro&quot;)
+    elif _tela == &quot;acesso&quot;:
+        if st.button(&quot;← Voltar ao Início&quot;, key=&quot;voltar_acesso&quot;):
+            st.session_state[&quot;home_tela&quot;] = &quot;home&quot;
+            st.rerun()
+        st.divider()
+        _aba_simulacao()
+    else:
+        _render_criar_admin()
+    st.stop()
+
+# ---------------------------------------------------------------------------
+# USUÁRIO AUTENTICADO — Navegação e sessão
+# ---------------------------------------------------------------------------
+_opcoes_nav = [
+    &quot;🔐 Cofre de Toxinas do MMA&quot;,
+    &quot;📹 Validar Acesso / Login Biométrico&quot;,
+    &quot;📈 Dashboard Analítico de Acessos&quot;,
+    &quot;📊 Dashboard e Relatórios&quot;,
+    &quot;🐞 Registro de Erros / Logs&quot;,
+    &quot;📸 Cadastro de Colaboradores&quot;,
+]
+if usuario_tem_nivel(3):
+    _opcoes_nav.insert(5, &quot;🛡️ Gestão de Acessos&quot;)
+
+_destino_inicial = st.session_state.get(&quot;redirecionar_para&quot;)
+if _destino_inicial in _opcoes_nav:
+    _idx_nav = _opcoes_nav.index(_destino_inicial)
+else:
+    _idx_nav = 0
+
 opcao = st.sidebar.radio(
     &quot;Navegação:&quot;,
-    [
-        &quot;🔐 Cofre de Toxinas do MMA&quot;,
-        &quot;📸 Cadastro de Colaboradores&quot;,
-        &quot;📹 Validar Acesso / Login Biométrico&quot;,
-        &quot;📈 Dashboard Analítico de Acessos&quot;,
-        &quot;📊 Dashboard e Relatórios&quot;,
-        &quot;🐞 Registro de Erros / Logs&quot;,
-    ],
+    _opcoes_nav,
+    index=_idx_nav,
 )
+st.session_state.pop(&quot;redirecionar_para&quot;, None)
 
 _usuario_sidebar = st.session_state.get(&quot;usuario_logado&quot;)
 if _usuario_sidebar:
-    expirou = st.session_state.get(&quot;sessao_expirada&quot;, False)
-    if not expirou and _sessao_valida():
-        st.sidebar.success(
-            f&quot;🟢 **{_usuario_sidebar[&#x27;nome&#x27;]}**\n{rotulo_nivel(_usuario_sidebar[&#x27;nivel_acesso&#x27;])}&quot;
-        )
-    else:
-        st.sidebar.warning(
-            &quot;⏱️ **Sessão expirada por inatividade.**\nFaça novo login biométrico.&quot;
-        )
+    st.sidebar.success(
+        f&quot;🟢 **{_usuario_sidebar[&#x27;nome&#x27;]}**\n{rotulo_nivel(_usuario_sidebar[&#x27;nivel_acesso&#x27;])}&quot;
+    )
+    if _usuario_sidebar.get(&quot;pode_cadastrar&quot;):
+        st.sidebar.caption(&quot;📝 Permissão de cadastro de colaboradores&quot;)
     if st.sidebar.button(&quot;🔓 Encerrar Sessão&quot;, use_container_width=True):
-        st.session_state.pop(&quot;usuario_logado&quot;, None)
-        st.session_state.pop(&quot;sessao_expirada&quot;, None)
+        _encerrar_sessao()
         st.rerun()
-else:
-    st.sidebar.info(&quot;🔴 Nenhuma sessão ativa&quot;)
 st.sidebar.divider()
 
-# --- CONFIGURAÇÕES DE ALERTAS NA SIDEBAR ---
-with st.sidebar.expander(&quot;⚙️ Configurar Notificações&quot;):
-    st.markdown(&quot;**📧 E-mail (SMTP)**&quot;)
-    st.checkbox(&quot;Ativar Alerta E-mail&quot;, key=&quot;cfg_email_ativo&quot;)
-    st.selectbox(
-        &quot;Provedor de e-mail (SMTP):&quot;,
-        list(PRESETS_SMTP.keys()),
-        key=&quot;cfg_email_provedor&quot;,
-        on_change=_definir_preset_smtp,
-    )
-    c1, c2 = st.columns([2, 1])
-    c1.text_input(&quot;Host SMTP:&quot;, key=&quot;cfg_email_smtp_host&quot;)
-    c2.text_input(&quot;Porta:&quot;, key=&quot;cfg_email_smtp_port&quot;)
-    st.text_input(
-        &quot;SMTP Login (opcional; padrão: remetente):&quot;,
-        key=&quot;cfg_email_smtp_login&quot;,
-        placeholder=&quot;ex.: seu@dominio.com.br (necessário no Brevo)&quot;,
-    )
-    st.text_input(
-        &quot;Seu E-mail (Remetente):&quot;,
-        key=&quot;cfg_email_remetente&quot;,
-        placeholder=&quot;seu@gmail.com&quot;,
-    )
-    st.text_input(
-        &quot;Senha de App:&quot;,
-        type=&quot;password&quot;,
-        key=&quot;cfg_email_senha&quot;,
-        help=&quot;Crie uma Senha de App no Gmail&quot;,
-    )
-    st.text_input(
-        &quot;E-mail do Responsável:&quot;,
-        key=&quot;cfg_email_destinatario&quot;,
-        placeholder=&quot;destino@empresa.com&quot;,
-    )
-
-    st.divider()
-    st.markdown(&quot;**📱 WhatsApp / SMS (Twilio)**&quot;)
-    st.checkbox(&quot;Ativar Alerta Twilio&quot;, key=&quot;cfg_twilio_ativo&quot;)
-    st.text_input(&quot;Account SID:&quot;, key=&quot;cfg_twilio_sid&quot;)
-    st.text_input(&quot;Auth Token:&quot;, type=&quot;password&quot;, key=&quot;cfg_twilio_token&quot;)
-    st.text_input(
-        &quot;Número Twilio (De):&quot;,
-        key=&quot;cfg_twilio_de&quot;,
-        placeholder=&quot;whatsapp:+14155238886&quot;,
-    )
-    st.text_input(
-        &quot;Seu WhatsApp (Para):&quot;,
-        key=&quot;cfg_twilio_para&quot;,
-        placeholder=&quot;whatsapp:+5511999999999&quot;,
-    )
-
-    st.divider()
-    _salvar_config_alerta()
-    if st.button(&quot;🔔 Enviar alerta de teste&quot;, use_container_width=True):
-        if _config_alertas_pronta():
-            enviar_alerta_seguranca(
-                &quot;🔧 TESTE&quot;,
-                &quot;Teste de notificação — configuração de alertas verificada com sucesso!&quot;,
-            )
-    if st.button(&quot;🚨 Simular acesso negado (gatilho)&quot;, use_container_width=True):
-        if _config_alertas_pronta():
-            enviar_alerta_seguranca(
-                &quot;Nível 3 – Ministro do Meio Ambiente&quot;,
-                &quot;Tentativa de acesso negada (simulação de teste) — biometria não reconhecida.&quot;,
-            )
+if &quot;home_aviso&quot; in st.session_state:
+    _aviso = st.session_state.pop(&quot;home_aviso&quot;)
+    st.warning(_aviso)
 
 
 def ao_trocar_aba_guard(fn, modulo):
@@ -3048,8 +3454,18 @@ def ao_trocar_aba_guard(fn, modulo):
         )
 
 
+
 if opcao == &quot;📸 Cadastro de Colaboradores&quot;:
     def _aba_cadastro():
+        if not usuario_pode_cadastrar():
+            st.title(&quot;📸 Cadastro de Colaboradores&quot;)
+            st.warning(
+                &quot;🔒 **Acesso restrito.** Apenas colaboradores autorizados &quot;
+                &quot;(com permissão de cadastro, definida na aba 🛡️ Gestão de &quot;
+                &quot;Acessos pelo nível 3) podem cadastrar novos colaboradores.&quot;
+            )
+            return
+
         st.markdown(MOLDURA_CIRCULAR_CSS, unsafe_allow_html=True)
         st.title(&quot;📸 Cadastro de Colaboradores e Permissões&quot;)
 
@@ -3087,6 +3503,21 @@ if opcao == &quot;📸 Cadastro de Colaboradores&quot;:
             )
             st.caption(descricao_nivel(st.session_state.get(&quot;reg_nivel&quot;, 1)))
 
+            st.divider()
+            st.subheader(&quot;Credenciais de Acesso&quot;)
+            st.text_input(
+                &quot;Usuário (login):*&quot;,
+                key=&quot;reg_usuario&quot;,
+                placeholder=&quot;ex.: maria.silva&quot;,
+                help=&quot;Este usuário será usado para entrar no sistema.&quot;,
+            )
+            st.text_input(
+                &quot;Senha:*&quot;,
+                type=&quot;password&quot;,
+                key=&quot;reg_senha&quot;,
+                help=&quot;Senha inicial (mínimo 6 caracteres).&quot;,
+            )
+
         with col2:
             st.subheader(&quot;Captura da Foto&quot;)
             metodo_foto = st.radio(
@@ -3119,15 +3550,28 @@ if opcao == &quot;📸 Cadastro de Colaboradores&quot;:
         try:
             conn = sqlite3.connect(DB_FILE)
             df_colabs = pd.read_sql_query(
-                &quot;SELECT id, nome, cargo, divisao, nivel_acesso, data_cadastro FROM colaboradores&quot;,
+                &quot;SELECT id, nome, cargo, divisao, nivel_acesso, usuario, &quot;
+                &quot;pode_cadastrar, data_cadastro FROM colaboradores&quot;,
                 conn,
             )
 
             if not df_colabs.empty:
                 df_colabs[&quot;nivel&quot;] = df_colabs[&quot;nivel_acesso&quot;].map(rotulo_nivel)
+                df_colabs[&quot;pde_cadastrar&quot;] = df_colabs[&quot;pode_cadastrar&quot;].map(
+                    {1: &quot;✅ Sim&quot;, 0: &quot;—&quot;}
+                )
                 st.dataframe(
                     df_colabs[
-                        [&quot;id&quot;, &quot;nome&quot;, &quot;cargo&quot;, &quot;divisao&quot;, &quot;nivel&quot;, &quot;data_cadastro&quot;]
+                        [
+                            &quot;id&quot;,
+                            &quot;nome&quot;,
+                            &quot;cargo&quot;,
+                            &quot;divisao&quot;,
+                            &quot;nivel&quot;,
+                            &quot;usuario&quot;,
+                            &quot;pde_cadastrar&quot;,
+                            &quot;data_cadastro&quot;,
+                        ]
                     ].rename(
                         columns={
                             &quot;id&quot;: &quot;ID&quot;,
@@ -3135,6 +3579,8 @@ if opcao == &quot;📸 Cadastro de Colaboradores&quot;:
                             &quot;cargo&quot;: &quot;Cargo&quot;,
                             &quot;divisao&quot;: &quot;Divisão&quot;,
                             &quot;nivel&quot;: &quot;Nível de Acesso&quot;,
+                            &quot;usuario&quot;: &quot;Usuário&quot;,
+                            &quot;pde_cadastrar&quot;: &quot;Pode Cadastrar&quot;,
                             &quot;data_cadastro&quot;: &quot;Data Cadastro&quot;,
                         }
                     ),
@@ -3153,109 +3599,19 @@ if opcao == &quot;📸 Cadastro de Colaboradores&quot;:
     ao_trocar_aba_guard(_aba_cadastro, &quot;Cadastro de Colaboradores&quot;)
 
 elif opcao == &quot;📹 Validar Acesso / Login Biométrico&quot;:
-    def _aba_simulacao():
-        st.markdown(MOLDURA_CIRCULAR_CSS, unsafe_allow_html=True)
-        st.title(&quot;📹 Validação Biométrica / Login ao Cofre de Toxinas&quot;)
-
-        nivel_requerido = st.selectbox(
-            &quot;Selecione o nível do compartimento do cofre sendo acessado:&quot;,
-            options=list(NIVEIS_ACESSO.keys()),
-            format_func=rotulo_nivel,
-        )
-        area_requerida = rotulo_nivel(nivel_requerido)
-        st.markdown(
-            f&quot;**Status da Câmera:** Monitorando o acesso ao compartimento &quot;
-            f&quot;**[{area_requerida}]** do cofre.&quot;
-        )
-
-        bloq, minutos = _bloqueio_ativo(area_requerida)
-        if bloq:
-            st.error(
-                f&quot;⛔ **BLOQUEIO TEMPORÁRIO ATIVADO**\n\nO compartimento &quot;
-                f&quot;**{area_requerida}** está com a validação **suspensa por &quot;
-                f&quot;~{minutos} min** após tentativas repetidas de fraude ou &quot;
-                f&quot;acesso indevido. O responsável foi notificado.&quot;
-            )
-            tent_linhas = _tentativas_recentes(area_requerida)
-            if tent_linhas:
-                st.dataframe(pd.DataFrame(tent_linhas), width=&quot;stretch&quot;)
-            return
-
-        metodo_leitura = st.radio(
-            &quot;Origem da imagem:&quot;,
-            [
-                &quot;Tirar Foto pela Webcam&quot;,
-                &quot;🎥 Mini Vídeo Anti-Fraude (mova o rosto)&quot;,
-            ],
-            key=&quot;metodo_leitura_radio&quot;,
-        )
-
-        if metodo_leitura == &quot;🎥 Mini Vídeo Anti-Fraude (mova o rosto)&quot;:
-            _render_mini_video(nivel_requerido, area_requerida)
-            return
-
-        input_test = st.camera_input(
-            &quot;Centralize o rosto no círculo para leitura&quot;
-        )
-
-        if input_test is not None:
-            test_bytes = input_test.getvalue()
-            temp_test_path = &quot;temp_test.jpg&quot;
-            with open(temp_test_path, &quot;wb&quot;) as f:
-                f.write(test_bytes)
-
-            recortar_centro_rosto(temp_test_path)
-
-            try:
-                carregar_modelo_facial()
-                with st.spinner(&quot;Validando biometria facial...&quot;):
-                    melhor_candidato, menor_distancia = _melhor_match_biometrico(
-                        temp_test_path
-                    )
-
-                if os.path.exists(temp_test_path):
-                    os.remove(temp_test_path)
-
-                if melhor_candidato is not None and menor_distancia &lt;= 0.35:
-                    colab_id, colab_nome = melhor_candidato
-                    _conceder_ou_negar(
-                        colab_id,
-                        colab_nome,
-                        menor_distancia,
-                        nivel_requerido,
-                        area_requerida,
-                    )
-                else:
-                    st.error(
-                        f&quot;🚨 **ACESSO NEGADO!** Biometria não bateu com nenhum cadastrado. (Menor distância calculada: {menor_distancia:.3f})&quot;
-                    )
-                    registrar_log(
-                        &quot;Desconhecido&quot;,
-                        area_requerida,
-                        &quot;NEGADO&quot;,
-                        {&quot;motivo&quot;: &quot;Biometria não reconhecida (foto)&quot;},
-                    )
-                    _registrar_e_verificar_bloqueio(
-                        area_requerida,
-                        &quot;Biometria não reconhecida (foto).&quot;,
-                        origem=&quot;foto&quot;,
-                    )
-
-                    enviar_alerta_seguranca(
-                        area_requerida, &quot;Pessoa não identificada/desconhecida.&quot;
-                    )
-
-            except Exception as e:
-                registrar_erro(&quot;GERAL&quot;, &quot;Validação de Acesso&quot;, str(e))
-                st.error(
-                    f&quot;❌ Ocorreu um erro inesperado na validação de acesso. Veja &quot;
-                    f&quot;a aba 🐞 Registro de Erros para ajuda. ({e})&quot;
-                )
-
     ao_trocar_aba_guard(_aba_simulacao, &quot;Validar Acesso / Login Biométrico&quot;)
 
 elif opcao == &quot;📈 Dashboard Analítico de Acessos&quot;:
     def _aba_dash_analitico():
+        if not usuario_tem_nivel(2):
+            st.title(&quot;📈 Dashboard Analítico de Acessos&quot;)
+            st.warning(
+                &quot;🔒 **Acesso restrito.** O dashboard analítico de acessos só é &quot;
+                &quot;liberado para colaboradores de **nível 2 ou 3** (Diretores de &quot;
+                &quot;Divisões Específicas e Ministro do Meio Ambiente).&quot;
+            )
+            return
+
         st.title(&quot;📈 Dashboard Analítico de Acessos ao Cofre&quot;)
         st.caption(
             &quot;Visão consolidada dos eventos de acesso ao **Cofre de Toxinas**: &quot;
@@ -3622,6 +3978,15 @@ elif opcao == &quot;📈 Dashboard Analítico de Acessos&quot;:
 
 elif opcao == &quot;📊 Dashboard e Relatórios&quot;:
     def _aba_dash_relatorios():
+        if not usuario_tem_nivel(2):
+            st.title(&quot;📊 Dashboard e Relatórios&quot;)
+            st.warning(
+                &quot;🔒 **Acesso restrito.** O dashboard e relatórios de auditoria &quot;
+                &quot;só é liberado para colaboradores de **nível 2 ou 3** &quot;
+                &quot;(Diretores de Divisões Específicas e Ministro).&quot;
+            )
+            return
+
         st.title(&quot;📊 Auditoria e Métricas de Controle de Acesso ao Cofre&quot;)
 
         df_logs = _preparar_logs()
@@ -3638,7 +4003,7 @@ elif opcao == &quot;📊 Dashboard e Relatórios&quot;:
         m1.metric(&quot;Total de Acessos&quot;, total_acessos)
         m2.metric(&quot;Acessos Permitidos&quot;, permitidos)
         m3.metric(
-            &quot;Tentativas Negadas / Alertas&quot;,
+            &quot;Tentativas Negadas&quot;,
             negados,
             delta_color=&quot;inverse&quot; if negados &gt; 0 else &quot;normal&quot;,
         )
@@ -3740,6 +4105,14 @@ elif opcao == &quot;📊 Dashboard e Relatórios&quot;:
 
 elif opcao == &quot;🐞 Registro de Erros / Logs&quot;:
     def _aba_logs():
+        if not usuario_tem_nivel(2):
+            st.title(&quot;🐞 Registro de Erros / Logs&quot;)
+            st.warning(
+                &quot;🔒 **Acesso restrito.** O registro de erros/logs do sistema &quot;
+                &quot;só é liberado para colaboradores de **nível 2 ou 3**.&quot;
+            )
+            return
+
         st.title(&quot;🐞 Registro de Erros / Logs&quot;)
         st.caption(
             &quot;Registros automáticos de erros capturados pela aplicação. Use os &quot;
@@ -3892,6 +4265,172 @@ elif opcao == &quot;🐞 Registro de Erros / Logs&quot;:
 
     ao_trocar_aba_guard(_aba_logs, &quot;Registro de Erros / Logs&quot;)
 
+elif opcao == &quot;🛡️ Gestão de Acessos&quot;:
+    def _aba_gestao_acessos():
+        if not usuario_tem_nivel(3):
+            st.title(&quot;🛡️ Gestão de Acessos&quot;)
+            st.warning(
+                &quot;🔒 **Acesso restrito ao nível 3** — Ministro do Meio Ambiente.&quot;
+            )
+            return
+
+        st.title(&quot;🛡️ Gestão de Acessos e Permissões&quot;)
+        st.caption(
+            &quot;Gerencie as credenciais (usuário/senha), o nível de acesso e a &quot;
+            &quot;permissão de cadastro dos colaboradores. A permissão de cadastro &quot;
+            &quot;deve ser concedida a apenas 1 ou 2 colaboradores de confiança.&quot;
+        )
+
+        try:
+            conn = sqlite3.connect(DB_FILE)
+            df_colabs = pd.read_sql_query(
+                &quot;SELECT id, nome, cargo, divisao, nivel_acesso, usuario, &quot;
+                &quot;pode_cadastrar, foto_path, data_cadastro FROM colaboradores &quot;
+                &quot;ORDER BY nome&quot;,
+                conn,
+            )
+            conn.close()
+            df_colabs[&quot;usuario&quot;] = df_colabs[&quot;usuario&quot;].fillna(&quot;&quot;).astype(str)
+        except Exception as e:
+            registrar_erro(&quot;BANCO&quot;, &quot;Gestão de Acessos&quot;, str(e))
+            st.error(
+                f&quot;Erro ao carregar colaboradores. Veja a aba 🐞 Registro de &quot;
+                f&quot;Erros para ajuda. ({e})&quot;
+            )
+            return
+
+        if df_colabs.empty:
+            st.info(&quot;Nenhum colaborador cadastrado ainda.&quot;)
+            return
+
+        df_show = df_colabs.copy()
+        df_show[&quot;nivel&quot;] = df_show[&quot;nivel_acesso&quot;].map(rotulo_nivel)
+        df_show[&quot;pode_cadastrar_txt&quot;] = df_show[&quot;pode_cadastrar&quot;].map(
+            {1: &quot;✅ Sim&quot;, 0: &quot;—&quot;}
+        )
+        df_show[&quot;credenciais&quot;] = df_show[&quot;usuario&quot;].fillna(&quot;—&quot;).replace(&quot;&quot;, &quot;—&quot;)
+        st.dataframe(
+            df_show[
+                [&quot;id&quot;, &quot;nome&quot;, &quot;cargo&quot;, &quot;divisao&quot;, &quot;nivel&quot;, &quot;credenciais&quot;,
+                 &quot;pode_cadastrar_txt&quot;]
+            ].rename(
+                columns={
+                    &quot;id&quot;: &quot;ID&quot;,
+                    &quot;nome&quot;: &quot;Nome&quot;,
+                    &quot;cargo&quot;: &quot;Cargo&quot;,
+                    &quot;divisao&quot;: &quot;Divisão&quot;,
+                    &quot;nivel&quot;: &quot;Nível de Acesso&quot;,
+                    &quot;credenciais&quot;: &quot;Usuário&quot;,
+                    &quot;pode_cadastrar_txt&quot;: &quot;Pode Cadastrar&quot;,
+                }
+            ),
+            width=&quot;stretch&quot;,
+        )
+
+        st.divider()
+        st.subheader(&quot;✏️ Editar Colaborador&quot;)
+
+        opcoes = {
+            f&quot;{r[&#x27;nome&#x27;]} (ID {r[&#x27;id&#x27;]})&quot;: r[&quot;id&quot;]
+            for _, r in df_colabs.iterrows()
+        }
+        escolha = st.selectbox(
+            &quot;Selecione o colaborador:&quot;,
+            options=list(opcoes.keys()),
+            key=&quot;gestao_escolha&quot;,
+        )
+        colab_id = opcoes[escolha]
+        linha = df_colabs[df_colabs[&quot;id&quot;] == colab_id].iloc[0]
+
+        with st.form(&quot;gestao_editar&quot;):
+            novo_usuario = st.text_input(
+                &quot;Usuário (login):&quot;,
+                value=linha.get(&quot;usuario&quot;) or &quot;&quot;,
+                key=&quot;gestao_usuario&quot;,
+            )
+            nova_senha = st.text_input(
+                &quot;Nova Senha (deixe em branco para manter):&quot;,
+                type=&quot;password&quot;,
+                key=&quot;gestao_senha&quot;,
+            )
+            novo_nivel = st.selectbox(
+                &quot;Nível de Acesso:&quot;,
+                options=list(NIVEIS_ACESSO.keys()),
+                format_func=rotulo_nivel,
+                index=int(linha[&quot;nivel_acesso&quot;]) - 1,
+                key=&quot;gestao_nivel&quot;,
+            )
+            pode_cadastrar = st.checkbox(
+                &quot;Permitir que este colaborador cadastre novos colaboradores&quot;,
+                value=bool(linha.get(&quot;pode_cadastrar&quot;)),
+                key=&quot;gestao_pode_cadastrar&quot;,
+                help=&quot;Conceda esta permissão a apenas 1 ou 2 colaboradores de confiança.&quot;,
+            )
+            salvar = st.form_submit_button(&quot;💾 Salvar Alterações&quot;, type=&quot;primary&quot;)
+
+        if salvar:
+            novo_usuario = (novo_usuario or &quot;&quot;).strip()
+            if not novo_usuario:
+                st.error(&quot;⚠️ O usuário não pode ficar vazio.&quot;)
+                return
+            try:
+                conn = sqlite3.connect(DB_FILE)
+                cur = conn.cursor()
+                cur.execute(
+                    &quot;SELECT COUNT(*) FROM colaboradores &quot;
+                    &quot;WHERE usuario = ? COLLATE NOCASE AND id &lt;&gt; ?&quot;,
+                    (novo_usuario, colab_id),
+                )
+                if cur.fetchone()[0] &gt; 0:
+                    conn.close()
+                    st.error(&quot;⚠️ Este usuário já está em uso por outro colaborador.&quot;)
+                    return
+                if nova_senha:
+                    if len(nova_senha) &lt; 6:
+                        conn.close()
+                        st.error(&quot;⚠️ A nova senha deve ter ao menos 6 caracteres.&quot;)
+                        return
+                    senha_hash = hash_senha(nova_senha)
+                    cur.execute(
+                        &quot;UPDATE colaboradores SET usuario = ?, senha_hash = ? &quot;
+                        &quot;WHERE id = ?&quot;,
+                        (novo_usuario, senha_hash, colab_id),
+                    )
+                else:
+                    cur.execute(
+                        &quot;UPDATE colaboradores SET usuario = ? WHERE id = ?&quot;,
+                        (novo_usuario, colab_id),
+                    )
+                cur.execute(
+                    &quot;UPDATE colaboradores SET nivel_acesso = ?, pode_cadastrar = ? &quot;
+                    &quot;WHERE id = ?&quot;,
+                    (novo_nivel, 1 if pode_cadastrar else 0, colab_id),
+                )
+                conn.commit()
+                conn.close()
+
+                user_atual = st.session_state.get(&quot;usuario_logado&quot;)
+                if user_atual and user_atual.get(&quot;id&quot;) == colab_id:
+                    user_atual[&quot;nivel_acesso&quot;] = novo_nivel
+                    user_atual[&quot;pode_cadastrar&quot;] = 1 if pode_cadastrar else 0
+                    user_atual[&quot;usuario&quot;] = novo_usuario
+                    st.session_state[&quot;usuario_logado&quot;] = user_atual
+
+                st.success(
+                    f&quot;✅ Alterações salvas para **{linha[&#x27;nome&#x27;]}**. &quot;
+                    f&quot;Nível: {rotulo_nivel(novo_nivel)}. &quot;
+                    f&quot;Pode cadastrar: {&#x27;✅ Sim&#x27; if pode_cadastrar else &#x27;—&#x27;}.&quot;
+                )
+                st.rerun()
+            except Exception as e:
+                registrar_erro(&quot;BANCO&quot;, &quot;Gestão de Acessos (Editar)&quot;, str(e))
+                st.error(
+                    f&quot;❌ Erro ao salvar alterações. Veja a aba 🐞 Registro de &quot;
+                    f&quot;Erros para ajuda. ({e})&quot;
+                )
+
+    ao_trocar_aba_guard(_aba_gestao_acessos, &quot;Gestão de Acessos&quot;)
+
 elif opcao == &quot;🔐 Cofre de Toxinas do MMA&quot;:
     def _aba_dados_geo():
         st.title(&quot;🔐 Cofre de Toxinas — Ministério do Meio Ambiente&quot;)
@@ -3907,8 +4446,9 @@ elif opcao == &quot;🔐 Cofre de Toxinas do MMA&quot;:
             st.warning(
                 &quot;⏱️ **Sessão expirada ou nenhuma sessão ativa.** &quot; if expirou
                 else &quot;⚠️ **Nenhuma sessão ativa.** &quot;
-                + &quot;Valide o acesso biométrico na aba 📹 &quot;
-                &quot;**Validar Acesso / Login Biométrico** para visualizar o cofre.&quot;
+                + &quot;Faça login com **usuário e senha** para visualizar o cofre. &quot;
+                &quot;Use a aba 📹 **Validar Acesso / Login Biométrico** para &quot;
+                &quot;liberar compartimentos conforme o seu nível.&quot;
             )
             return
 
@@ -4124,6 +4664,7 @@ elif opcao == &quot;🔐 Cofre de Toxinas do MMA&quot;:
 
     ao_trocar_aba_guard(_aba_dados_geo, &quot;Cofre de Toxinas (Dados)&quot;)
 
+
 <h2>Anexo B — Script auxiliar: gerar_excel.py</h2>
 <p>Gera a planilha <code>Relatorio_Controle_Acesso_Facial.xlsx</code> com abas
 "Dashboard &amp; Métricas", "Logs de Acesso" e "Cadastro Colaboradores",
@@ -4215,7 +4756,7 @@ kpis = [
         &quot;E4:F5&quot;,
         &quot;TENTATIVAS NEGADAS&quot;,
         &#x27;=COUNTIF(\&#x27;Logs de Acesso\&#x27;!D2:D100, &quot;NEGADO&quot;)&#x27;,
-        &quot;Alertas de segurança&quot;,
+        &quot;Tentativas por período&quot;,
     ),
 ]
 

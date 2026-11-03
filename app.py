@@ -11,21 +11,11 @@ import json
 import secrets
 import time
 from datetime import datetime, timedelta
-from email.mime.text import MIMEText
-import smtplib
 import sqlite3
 from PIL import Image
 import cv2
 import numpy as np
-from deepface import DeepFace
 import pandas as pd
-import requests
-import threading
-import subprocess
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
 import streamlit as st
 import altair as alt
 import math
@@ -37,6 +27,15 @@ st.set_page_config(
     page_icon="🔐",
     layout="wide",
 )
+
+
+@st.cache_resource(show_spinner=False)
+def _carregar_deepface():
+    """Importa DeepFace/TensorFlow apenas quando a biometria for usada."""
+    from deepface import DeepFace
+
+    return DeepFace
+
 
 # CSS responsivo para dispositivos móveis
 MOBILE_CSS = """
@@ -278,103 +277,6 @@ def verificar_senha(senha, armazenado):
         return False
 
 
-CHAVES_CONFIG_ALERTA = [
-    "cfg_email_ativo",
-    "cfg_email_provedor",
-    "cfg_email_smtp_host",
-    "cfg_email_smtp_port",
-    "cfg_email_smtp_login",
-    "cfg_email_remetente",
-    "cfg_email_senha",
-    "cfg_email_destinatario",
-    "cfg_twilio_ativo",
-    "cfg_twilio_sid",
-    "cfg_twilio_token",
-    "cfg_twilio_de",
-    "cfg_twilio_para",
-    "cfg_wagrupo_ativo",
-    "cfg_wagrupo_id",
-    "cfg_wagrupo_nome",
-]
-
-PRESETS_SMTP = {
-    "Gmail": ("smtp.gmail.com", "587"),
-    "Outlook": ("smtp-mail.outlook.com", "587"),
-    "Brevo": ("smtp-relay.brevo.com", "587"),
-    "Outro": ("", ""),
-}
-
-
-def _definir_preset_smtp():
-    """Preenche host/porta da Session State conforme o provedor escolhido."""
-    prov = st.session_state.get("cfg_email_provedor", "Gmail")
-    if prov not in PRESETS_SMTP:
-        prov = "Gmail"
-    if prov == "Outro":
-        return
-    host, porta = PRESETS_SMTP[prov]
-    st.session_state["cfg_email_smtp_host"] = host
-    st.session_state["cfg_email_smtp_port"] = porta
-
-
-def _carregar_config_alerta():
-    """Pré-preenche a Session State com as notificações salvas no banco."""
-    try:
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS configuracoes (
-                chave TEXT PRIMARY KEY,
-                valor TEXT
-            )
-            """
-        )
-        linhas = cursor.execute(
-            "SELECT chave, valor FROM configuracoes"
-        ).fetchall()
-        conn.close()
-    except Exception:
-        return
-    for chave, valor in linhas:
-        if chave in CHAVES_CONFIG_ALERTA and chave not in st.session_state:
-            st.session_state[chave] = (
-                valor == "1" if chave.endswith("_ativo") else valor
-            )
-
-
-def _salvar_config_alerta():
-    """Persiste as configurações de notificação no banco (quando houver mudança)."""
-    try:
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
-        atuais = dict(
-            cursor.execute("SELECT chave, valor FROM configuracoes").fetchall()
-        )
-        for chave in CHAVES_CONFIG_ALERTA:
-            valor = st.session_state.get(chave)
-            if valor is None:
-                continue
-            texto = (
-                ("1" if valor else "0")
-                if isinstance(valor, bool)
-                else str(valor).strip()
-            )
-            if atuais.get(chave) != texto:
-                cursor.execute(
-                    "INSERT INTO configuracoes (chave, valor) VALUES (?, ?) "
-                    "ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor",
-                    (chave, texto),
-                )
-        conn.commit()
-        conn.close()
-    except Exception:
-        pass
-
-
-init_db()
-migrar_banco_legado()
-_carregar_config_alerta()
 
 NIVEIS_ACESSO = {
     1: {
@@ -1615,6 +1517,11 @@ def _melhor_match_biometrico(temp_test_path):
 
     melhor_candidato = None
     menor_distancia = 1.0
+    DeepFace = (
+        _carregar_deepface()
+        if any(os.path.exists(cpath) for _, _, cpath in cadastrados)
+        else None
+    )
     for cid, cnome, cpath in cadastrados:
         if not os.path.exists(cpath):
             continue
@@ -1705,11 +1612,6 @@ def _conceder_ou_negar(
         f"Acesso indevido: {colab_nome} (nível {nivel_colab}) tentou o "
         f"compartimento de nível {nivel_requerido}.",
         origem="foto",
-    )
-    enviar_alerta_seguranca(
-        area_requerida,
-        f"Colaborador {colab_nome} tentou acessar o compartimento de nível "
-        f"{nivel_requerido} sem permissão (possui nível {nivel_colab}).",
     )
     return False
 
@@ -1812,12 +1714,6 @@ def _registrar_e_verificar_bloqueio(compartimento, motivo, detalhes=None,
     bloq, minutos = _bloqueio_ativo(compartimento)
     if bloq and st.session_state.get("alertou_bloqueio") != compartimento:
         st.session_state["alertou_bloqueio"] = compartimento
-        enviar_alerta_seguranca(
-            compartimento,
-            f"⛔ **BLOQUEIO TEMPORÁRIO ATIVADO** no compartimento "
-            f"{compartimento} após {n} tentativas de fraude/acesso indevido. "
-            f"Validação suspensa por {minutos} min. Motivo: {motivo}",
-        )
     return bloq, minutos
 
 
@@ -1904,12 +1800,7 @@ def _render_mini_video(nivel_requerido, area_requerida):
                     f"Nova validação permitida em até {minutos} min."
                 )
             else:
-                enviar_alerta_seguranca(
-                    area_requerida,
-                    "Tentativa de acesso bloqueada pelo mini vídeo anti-fraude: "
-                    f"{motivo}",
-                )
-            return
+                return
 
         st.success(
             f"✅ **Liveness aprovado!** {motivo}\n\nDetalhes: {detalhes}"
@@ -1953,10 +1844,6 @@ def _render_mini_video(nivel_requerido, area_requerida):
                     area_requerida,
                     "Biometria não reconhecida (mini vídeo).",
                     origem="mini_video",
-                )
-                enviar_alerta_seguranca(
-                    area_requerida,
-                    "Pessoa não identificada/desconhecida (mini vídeo).",
                 )
         except Exception as e:
             registrar_erro("GERAL", "Validação de Acesso (Mini Vídeo)", str(e))
@@ -2110,94 +1997,8 @@ def limpar_logs_erros():
         pass
 
 
-def _msg_padrao_whatsapp(area, motivo, dh):
-    """Mensagem padrão do alerta de segurança (enviada ao grupo)."""
-    return (
-        "🚨 *ALERTA DE SEGURANÇA*\n\n"
-        "Tentativa de acesso negada!\n"
-        f"- *Compartimento do Cofre:* {area}\n"
-        f"- *Data/Hora:* {dh}\n"
-        f"- *Motivo:* {motivo}"
-    )
 
 
-def _normalizar_grupo_id(raw):
-    """Extrai o código do grupo de um link de convite ou de um código puro."""
-    raw = (raw or "").strip()
-    if "chat.whatsapp.com/" in raw:
-        raw = raw.split("chat.whatsapp.com/", 1)[1]
-    raw = raw.split("?", 1)[0].strip("/")
-    return raw
-
-
-WA_PROFILE_DIR = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), ".waprofile"
-)
-
-MSG_INPUT_SELECTOR = (
-    'div[data-testid="conversation-panel-message-input"], '
-    'div[contenteditable="true"][role="textbox"], '
-    'footer div[contenteditable="true"]'
-)
-
-
-def _limpar_chromes_perfil():
-    """Encerra Chomes órfãos que ficaram presos no perfil de automação.
-
-    Sem isso, uma tentativa anterior interrompida prende o diretório
-    .waprofile e o Chrome novo falha com 'session not created'.
-    """
-    padrao = os.path.abspath(WA_PROFILE_DIR)
-    try:
-        saida = subprocess.run(
-            ["pgrep", "-f", padrao], capture_output=True, timeout=10
-        )
-        pids = saida.stdout.decode().split()
-        for pid in pids:
-            try:
-                os.kill(int(pid), 9)
-            except Exception:
-                pass
-    except Exception:
-        pass
-    time.sleep(1)
-
-
-def _wa_driver():
-    """Inicia o Chrome com o perfil de automação do WhatsApp Web."""
-    opts = Options()
-    opts.add_argument(f"--user-data-dir={WA_PROFILE_DIR}")
-    opts.add_argument("--profile-directory=Default")
-    opts.add_argument("--no-sandbox")
-    opts.add_argument("--disable-dev-shm-usage")
-    opts.add_argument("--no-first-run")
-    opts.add_argument("--no-default-browser-check")
-    opts.add_argument("--window-size=1280,800")
-    return webdriver.Chrome(options=opts)
-
-
-def _abrir_whatsapp(tentativas=3):
-    """Abre o Chrome no perfil e navega ao WhatsApp Web, com retry."""
-    _limpar_chromes_perfil()
-    for i in range(tentativas):
-        drv = None
-        try:
-            drv = _wa_driver()
-            drv.get("https://web.whatsapp.com/")
-            return drv
-        except Exception as e:
-            try:
-                if drv is not None:
-                    drv.quit()
-            except Exception:
-                pass
-            registrar_erro(
-                "WHATSAPP",
-                "Abrir WhatsApp Web",
-                f"Tentativa {i + 1} de {tentativas} falhou: {e}",
-            )
-            time.sleep(3)
-    return None
 
 
 def _wa_estado(driver, tempo=25):
@@ -2242,63 +2043,6 @@ def _aguardar_login(driver, tempo=300):
         time.sleep(2)
     return False
 
-
-def _esperar_elemento(driver, seletor, tempo):
-    """Espera um elemento visível aparecer e o retorna (ou None)."""
-    fim = time.time() + tempo
-    while time.time() < fim:
-        try:
-            el = driver.find_element(By.CSS_SELECTOR, seletor)
-            if el.is_displayed():
-                return el
-        except Exception:
-            pass
-        time.sleep(0.5)
-    return None
-
-
-def _abrir_grupo_clicando(driver):
-    """Clica em 'Abrir grupo'/'Entrar'/'Open group' na tela do convite."""
-    PALAVRAS = ("abrir", "open", "entrar", "join", "participar")
-    try:
-        for b in driver.find_elements(
-            By.CSS_SELECTOR, 'div[role="button"], button'
-        ):
-            if not b.is_displayed():
-                continue
-            t = (
-                (b.text or "")
-                + " "
-                + (b.get_attribute("aria-label") or "")
-            ).lower()
-            if any(p in t for p in PALAVRAS):
-                try:
-                    b.click()
-                    return True
-                except Exception:
-                    driver.execute_script("arguments[0].click();", b)
-                    return True
-    except Exception:
-        pass
-    try:
-        return bool(
-            driver.execute_script(
-                """
-                var PALAVRAS = ['abrir', 'open', 'entrar', 'join', 'participar'];
-                var els = document.querySelectorAll('div[role="button"], button');
-                for (var b of els) {
-                    var t = ((b.innerText || '') + ' ' +
-                             (b.getAttribute('aria-label') || '')).toLowerCase();
-                    for (var p of PALAVRAS) {
-                        if (t.indexOf(p) !== -1) { b.click(); return true; }
-                    }
-                }
-                return false;
-                """
-            )
-        )
-    except Exception:
-        return False
 
 
 def _buscar_por_nome(driver, nome):
@@ -2359,23 +2103,6 @@ def _ir_para_grupo(driver, grupo_id, nome):
         driver.get(f"https://web.whatsapp.com/accept?code={grupo_id}")
     except Exception:
         return None
-    caixa = _esperar_elemento(driver, MSG_INPUT_SELECTOR, 15)
-    if caixa is not None:
-        return caixa
-    if _abrir_grupo_clicando(driver):
-        caixa = _esperar_elemento(driver, MSG_INPUT_SELECTOR, 15)
-        if caixa is not None:
-            return caixa
-    nome = (nome or "").strip()
-    if not nome:
-        return None
-    try:
-        driver.get("https://web.whatsapp.com/")
-        time.sleep(3)
-    except Exception:
-        return None
-    if _buscar_por_nome(driver, nome):
-        return _esperar_elemento(driver, MSG_INPUT_SELECTOR, 20)
     return None
 
 
@@ -2394,71 +2121,6 @@ def _enviar_msg_grupo(driver, grupo_id, nome, mensagem):
     time.sleep(2)
     return True
 
-
-def conectar_whatsapp_web():
-    """Abre o perfil de automação para escanear o QR (setup único)."""
-    st.info(
-        "📲 Abrindo o WhatsApp Web para conectar. "
-        "Escaneie o QR com o celular."
-    )
-
-    def _t():
-        drv = None
-        try:
-            drv = _abrir_whatsapp()
-            if drv is None:
-                registrar_erro(
-                    "WHATSAPP",
-                    "Conectar WhatsApp Web",
-                    "Não foi possível abrir o WhatsApp Web no perfil de "
-                    "automação após 3 tentativas.",
-                )
-                st.session_state["wa_feedback"] = (
-                    "erro",
-                    "Não foi possível abrir o WhatsApp Web no perfil de "
-                    "automação. Veja o log na aba 🐞 Registro de Erros.",
-                )
-                st.session_state["wa_status"] = "erro"
-                return
-            st.session_state["wa_feedback"] = (
-                "info",
-                "🕒 Escaneie o **QR code** com o celular. A janela fica por "
-                "até 5 minutos aguardando a conexão.",
-            )
-            if not _aguardar_login(drv, 300):
-                registrar_erro(
-                    "WHATSAPP",
-                    "Conectar WhatsApp Web",
-                    "Timeout: QR não escaneado em 5 minutos.",
-                )
-                st.session_state["wa_feedback"] = (
-                    "erro",
-                    "Timeout na conexão. Escaneie o QR em até 5 minutos.",
-                )
-                st.session_state["wa_status"] = "nao_conectado"
-            else:
-                registrar_erro(
-                    "WHATSAPP",
-                    "Conectar WhatsApp Web",
-                    "Perfil conectado com sucesso.",
-                )
-                st.session_state["wa_feedback"] = (
-                    "ok",
-                    "📲 WhatsApp Web conectado no perfil de automação!",
-                )
-                st.session_state["wa_status"] = "conectado"
-        except Exception as e:
-            registrar_erro("WHATSAPP", "Conectar WhatsApp Web", str(e))
-            st.session_state["wa_feedback"] = ("erro", f"Erro ao conectar: {e}")
-            st.session_state["wa_status"] = "erro"
-        finally:
-            try:
-                if drv is not None:
-                    drv.quit()
-            except Exception:
-                pass
-
-    threading.Thread(target=_t, daemon=True).start()
 
 
 def _checar_estado_perfil():
@@ -2489,305 +2151,8 @@ def _checar_estado_perfil():
             except Exception:
                 pass
 
-    threading.Thread(target=_t, daemon=True).start()
 
 
-def enviar_whatsapp_grupo(area, motivo):
-    """Envia a mensagem padrão ao grupo via WhatsApp Web (Selenium)."""
-    dh = datetime.now().strftime("%d/%m/%Y às %H:%M:%S")
-    grupo_id = _normalizar_grupo_id(
-        st.session_state.get("cfg_wagrupo_id", "")
-    )
-    if not grupo_id:
-        st.warning(
-            "⚠️ Alerta do grupo WhatsApp Web ativado, mas o **ID do grupo** "
-            "não foi preenchido. Informe o código do link de convite "
-            "(chat.whatsapp.com/<ID>) em ⚙️ Configurar Notificações."
-        )
-        return
-
-    st.info(
-        "🕒 **Abrindo o WhatsApp Web e enviando ao grupo...** "
-        "(Rode novamente a tela em alguns instantes para ver o resultado.)"
-    )
-    registrar_erro(
-        "WHATSAPP",
-        "Alerta grupo WhatsApp",
-        f"Início do envio para o grupo (ID: {grupo_id}). "
-        "Aguardando o navegador abrir o WhatsApp Web...",
-    )
-
-    def _envio():
-        drv = None
-        try:
-            drv = _abrir_whatsapp()
-            if drv is None:
-                registrar_erro(
-                    "WHATSAPP",
-                    "Alerta grupo WhatsApp",
-                    "Não foi possível abrir o WhatsApp Web no perfil de "
-                    "automação após 3 tentativas.",
-                )
-                st.session_state["wa_feedback"] = (
-                    "erro",
-                    "Não foi possível abrir o WhatsApp Web no perfil de "
-                    "automação. Veja o log na aba 🐞 Registro de Erros.",
-                )
-                st.session_state["wa_status"] = "erro"
-                return
-            estado = _wa_estado(drv, 40)
-            if estado == "qr":
-                registrar_erro(
-                    "WHATSAPP",
-                    "Alerta grupo WhatsApp",
-                    "WhatsApp Web não conectado. Mantendo a janela aberta para "
-                    "escanear o QR; envio continua após a conexão.",
-                )
-                st.session_state["wa_feedback"] = (
-                    "info",
-                    "🕒 O WhatsApp Web ainda não está conectado. **Escaneie o "
-                    "QR code** com o celular — a janela fica aberta por até 5 "
-                    "min e, ao conectar, o alerta é enviado.",
-                )
-                st.session_state["wa_status"] = "nao_conectado"
-                if not _aguardar_login(drv, 300):
-                    registrar_erro(
-                        "WHATSAPP",
-                        "Alerta grupo WhatsApp",
-                        "Timeout: QR não escaneado em 5 minutos.",
-                    )
-                    st.session_state["wa_feedback"] = (
-                        "erro",
-                        "Timeout: o QR não foi escaneado em 5 minutos. "
-                        "Clique em testar novamente.",
-                    )
-                    return
-                registrar_erro(
-                    "WHATSAPP",
-                    "Alerta grupo WhatsApp",
-                    "Perfil conectado. Prosseguindo com o envio.",
-                )
-                st.session_state["wa_status"] = "conectado"
-            elif estado != "logado":
-                registrar_erro(
-                    "WHATSAPP",
-                    "Alerta grupo WhatsApp",
-                    "Não foi possível acessar o WhatsApp Web no perfil "
-                    "de automação.",
-                )
-                st.session_state["wa_feedback"] = (
-                    "erro",
-                    "Não foi possível acessar o WhatsApp Web no perfil "
-                    "de automação.",
-                )
-                st.session_state["wa_status"] = "erro"
-                return
-
-            nome_grupo = st.session_state.get("cfg_wagrupo_nome", "").strip()
-            sucesso = _enviar_msg_grupo(
-                drv,
-                grupo_id,
-                nome_grupo,
-                _msg_padrao_whatsapp(area, motivo, dh),
-            )
-            if sucesso:
-                registrar_erro(
-                    "WHATSAPP",
-                    "Alerta grupo WhatsApp",
-                    "Mensagem enviada ao grupo.",
-                )
-                st.session_state["wa_feedback"] = (
-                    "ok",
-                    "Alerta enviado ao grupo WhatsApp!",
-                )
-            else:
-                registrar_erro(
-                    "WHATSAPP",
-                    "Alerta grupo WhatsApp",
-                    "Não foi possível abrir o grupo com o link de convite "
-                    "informado.",
-                )
-                st.session_state["wa_feedback"] = (
-                    "erro",
-                    "Não foi possível abrir o grupo. Confira se o link de "
-                    "convite está ativo e se o **Nome do grupo** está correto "
-                    "em ⚙️ Configurar Notificações.",
-                )
-        except Exception as e:
-            registrar_erro("WHATSAPP", "Alerta grupo WhatsApp", str(e))
-            st.session_state["wa_feedback"] = ("erro", f"Erro ao enviar: {e}")
-            st.session_state["wa_status"] = "erro"
-        finally:
-            try:
-                if drv is not None:
-                    drv.quit()
-            except Exception:
-                pass
-
-    threading.Thread(target=_envio, daemon=True).start()
-
-
-def enviar_alerta_seguranca(area, motivo):
-    """Envia alertas por E-mail e WhatsApp/SMS se os dados estiverem preenchidos."""
-    dh = datetime.now().strftime("%d/%m/%Y às %H:%M:%S")
-
-    # Recupera credenciais da Session State
-    email_ativo = st.session_state.get("cfg_email_ativo", False)
-    email_remetente = st.session_state.get("cfg_email_remetente", "").strip()
-    email_senha = st.session_state.get("cfg_email_senha", "").strip()
-    email_destinatario = st.session_state.get(
-        "cfg_email_destinatario", ""
-    ).strip()
-
-    twilio_ativo = st.session_state.get("cfg_twilio_ativo", False)
-    twilio_sid = st.session_state.get("cfg_twilio_sid", "").strip()
-    twilio_token = st.session_state.get("cfg_twilio_token", "").strip()
-    twilio_de = st.session_state.get("cfg_twilio_de", "").strip()
-    twilio_para = st.session_state.get("cfg_twilio_para", "").strip()
-
-    provedor = st.session_state.get("cfg_email_provedor", "Gmail")
-    smtp_host = st.session_state.get("cfg_email_smtp_host", "").strip()
-    smtp_port = st.session_state.get("cfg_email_smtp_port", "").strip()
-    smtp_login = st.session_state.get("cfg_email_smtp_login", "").strip()
-    host, port_padrao = PRESETS_SMTP.get(provedor, PRESETS_SMTP["Gmail"])
-    if not smtp_host:
-        smtp_host = host
-    if not smtp_port:
-        smtp_port = port_padrao
-    if not smtp_login:
-        smtp_login = email_remetente
-
-    # 1. Disparo por E-mail (SMTP Gmail/Outlook/Brevo)
-    if (
-        email_ativo
-        and email_remetente
-        and email_senha
-        and email_destinatario
-    ):
-        try:
-            corpo_email = f"ALERTA DE SEGURANÇA - FALHA DE ACESSO AO COFRE\n\nCompartimento do Cofre: {area}\nData/Hora: {dh}\nDetalhes: {motivo}"
-            msg = MIMEText(corpo_email)
-            msg["Subject"] = f"🚨 ALERTA: Falha de Acesso ao compartimento do cofre {area}"
-            msg["From"] = email_remetente
-            msg["To"] = email_destinatario
-
-            server = smtplib.SMTP(smtp_host, int(smtp_port))
-            server.starttls()
-            server.login(smtp_login, email_senha)
-            server.sendmail(
-                email_remetente, [email_destinatario], msg.as_string()
-            )
-            server.quit()
-            st.toast("📩 Alerta enviado por E-mail!", icon="📧")
-        except Exception as e:
-            registrar_erro("EMAIL", "Alerta E-mail", str(e))
-            msg_erro = str(e).lower()
-            if "535" in msg_erro or "badcredentials" in msg_erro:
-                if provedor == "Brevo":
-                    dica = (
-                        "\n\n💡 **Credenciais inválidas**: no **Brevo**, confira se "
-                        "copiou a **SMTP key** no campo *Senha de App*, se o **SMTP "
-                        "Login** está preenchido e se o **Remetente** foi confirmado "
-                        "(e-mail de verificação enviado pelo Brevo)."
-                    )
-                elif provedor == "Outlook":
-                    dica = (
-                        "\n\n💡 **Credenciais inválidas**: no **Outlook**, use a senha "
-                        "da conta ou uma senha de aplicativo e confira o **Remetente** "
-                        "e o **SMTP Login**."
-                    )
-                else:
-                    dica = (
-                        "\n\n💡 **Credenciais inválidas**: confira se a **Senha de App "
-                        "do Gmail** (16 caracteres) foi gerada em Conta Google → "
-                        "Segurança → Verificação em 2 etapas → **Senhas de App** e "
-                        "colada corretamente, e se o **Remetente** é a conta que criou "
-                        "essa senha."
-                    )
-            elif (
-                "connection" in msg_erro
-                or "timed out" in msg_erro
-                or "refused" in msg_erro
-                or "socket" in msg_erro
-            ):
-                dica = (
-                    f"\n\n💡 **Falha de conexão** com o servidor SMTP "
-                    f"({smtp_host}:{smtp_port}). Verifique sua conexão com a internet "
-                    "e as configurações de Host/Porta."
-                )
-            else:
-                dica = ""
-            st.warning(
-                f"Erro ao enviar e-mail de alerta: {e}{dica}\n\n"
-                "Registrado na aba 🐞 Registro de Erros para ajuda."
-            )
-    elif email_ativo:
-        faltam = []
-        if not email_remetente:
-            faltam.append("Seu E-mail (Remetente)")
-        if not email_senha:
-            faltam.append("Senha de App")
-        if not email_destinatario:
-            faltam.append("E-mail do Responsável")
-        st.warning(
-            "⚠️ Alerta E-mail ativado, mas a configuração está incompleta. "
-            f"Faltam: {', '.join(faltam)}. Preencha em ⚙️ Configurar Notificações."
-        )
-
-    # 2. Disparo por WhatsApp/SMS (Twilio API)
-    if twilio_ativo and twilio_sid and twilio_token and twilio_de and twilio_para:
-        try:
-            msg_txt = f"🚨 *ALERTA DE SEGURANÇA*\n\nTentativa de acesso negada!\n- *Compartimento do Cofre:* {area}\n- *Data/Hora:* {dh}\n- *Motivo:* {motivo}"
-            url = f"https://api.twilio.com/2010-04-01/Accounts/{twilio_sid}/Messages.json"
-            data = {"From": twilio_de, "To": twilio_para, "Body": msg_txt}
-            resp = requests.post(
-                url, data=data, auth=(twilio_sid, twilio_token)
-            )
-            if resp.status_code in [200, 201]:
-                st.toast("📱 Alerta enviado por WhatsApp/SMS!", icon="📲")
-            else:
-                registrar_erro(
-                    "TWILIO",
-                    "Alerta WhatsApp/SMS",
-                    f"HTTP {resp.status_code}: {resp.text}",
-                )
-                st.warning("Erro na resposta da Twilio (registrado nos logs).")
-        except Exception as e:
-            registrar_erro("TWILIO", "Alerta WhatsApp/SMS", str(e))
-            st.warning(
-                f"Erro ao enviar mensagem Twilio: {e}\n\n"
-                "Registrado na aba 🐞 Registro de Erros para ajuda."
-            )
-    elif twilio_ativo:
-        faltam_t = []
-        if not twilio_sid:
-            faltam_t.append("Account SID")
-        if not twilio_token:
-            faltam_t.append("Auth Token")
-        if not twilio_de:
-            faltam_t.append("Número Twilio (De)")
-        if not twilio_para:
-            faltam_t.append("Seu WhatsApp (Para)")
-        st.warning(
-            "⚠️ Alerta Twilio ativado, mas a configuração está incompleta. "
-            f"Faltam: {', '.join(faltam_t)}. Preencha em ⚙️ Configurar Notificações."
-        )
-
-    # 3. Disparo por WhatsApp Web (Selenium) — grupo pessoal logado no PC
-    if st.session_state.get("cfg_wagrupo_ativo", False):
-        enviar_whatsapp_grupo(area, motivo)
-
-
-def _canais_ativos():
-    """Lista os canais de notificação ativados na configuração."""
-    canais = []
-    if st.session_state.get("cfg_email_ativo", False):
-        canais.append("E-mail")
-    if st.session_state.get("cfg_twilio_ativo", False):
-        canais.append("WhatsApp/SMS (Twilio)")
-    if st.session_state.get("cfg_wagrupo_ativo", False):
-        canais.append("Grupo WhatsApp (Web)")
-    return canais
 
 
 def salvar_colaborador():
@@ -2882,6 +2247,7 @@ def salvar_colaborador():
 def carregar_modelo_facial():
     """Carrega o modelo VGG-Face uma única vez (evita recarregar a cada validação)."""
     try:
+        DeepFace = _carregar_deepface()
         return DeepFace.build_model("VGG-Face")
     except Exception as e:
         registrar_erro("BIOMETRIA", "Carregamento do Modelo Facial", str(e))
@@ -3501,9 +2867,7 @@ def _aba_simulacao():
                     origem="foto",
                 )
 
-                enviar_alerta_seguranca(
-                    area_requerida, "Pessoa não identificada/desconhecida."
-                )
+
 
         except Exception as e:
             registrar_erro("GERAL", "Validação de Acesso", str(e))
@@ -3588,155 +2952,9 @@ if _usuario_sidebar:
         st.rerun()
 st.sidebar.divider()
 
-# --- CONFIGURAÇÕES DE ALERTAS NA SIDEBAR ---
-with st.sidebar.expander("⚙️ Configurar Notificações"):
-    st.markdown("**📧 E-mail (SMTP)**")
-    st.checkbox("Ativar Alerta E-mail", key="cfg_email_ativo")
-    st.selectbox(
-        "Provedor de e-mail (SMTP):",
-        list(PRESETS_SMTP.keys()),
-        key="cfg_email_provedor",
-        on_change=_definir_preset_smtp,
-    )
-    c1, c2 = st.columns([2, 1])
-    c1.text_input("Host SMTP:", key="cfg_email_smtp_host")
-    c2.text_input("Porta:", key="cfg_email_smtp_port")
-    st.text_input(
-        "SMTP Login (opcional; padrão: remetente):",
-        key="cfg_email_smtp_login",
-        placeholder="ex.: seu@dominio.com.br (necessário no Brevo)",
-    )
-    st.text_input(
-        "Seu E-mail (Remetente):",
-        key="cfg_email_remetente",
-        placeholder="seu@gmail.com",
-    )
-    st.text_input(
-        "Senha de App:",
-        type="password",
-        key="cfg_email_senha",
-        help="Crie uma Senha de App no Gmail",
-    )
-    st.text_input(
-        "E-mail do Responsável:",
-        key="cfg_email_destinatario",
-        placeholder="destino@empresa.com",
-    )
-
-    st.divider()
-    st.markdown("**📱 WhatsApp / SMS (Twilio)**")
-    st.checkbox("Ativar Alerta Twilio", key="cfg_twilio_ativo")
-    st.text_input("Account SID:", key="cfg_twilio_sid")
-    st.text_input("Auth Token:", type="password", key="cfg_twilio_token")
-    st.text_input(
-        "Número Twilio (De):",
-        key="cfg_twilio_de",
-        placeholder="whatsapp:+14155238886",
-    )
-    st.text_input(
-        "Seu WhatsApp (Para):",
-        key="cfg_twilio_para",
-        placeholder="whatsapp:+5511999999999",
-    )
-
-    st.divider()
-    st.markdown("**📱 Grupo WhatsApp (Web)**")
-    st.checkbox(
-        "Ativar alerta no grupo WhatsApp Web",
-        key="cfg_wagrupo_ativo",
-        help="Envia a mensagem padrão ao grupo usando o WhatsApp Web "
-        "(perfil de automação próprio, via Selenium).",
-    )
-    st.text_input(
-        "ID do grupo:",
-        key="cfg_wagrupo_id",
-        placeholder="AB123CDEFGHijklmn (código do link de convite)",
-        help="Abra o grupo no WhatsApp → 'Adicionar participantes' → 'Convidar "
-        "via link' → copie só o código após chat.whatsapp.com/<código>.",
-    )
-    st.text_input(
-        "Nome do grupo:",
-        key="cfg_wagrupo_nome",
-        placeholder="Ex.: Envio de alerta de segurança",
-        help="Nome exato do grupo como aparece na lista de conversas. Usado "
-        "para abrir o grupo pela busca do WhatsApp Web (mais confiável).",
-    )
-    st.caption(
-        "Primeiro uso: clique em **📲 Conectar WhatsApp Web** abaixo e "
-        "escaneie o QR com o celular (feito uma vez)."
-    )
-    _status_wa = st.session_state.get("wa_status")
-    if _status_wa == "conectado":
-        st.success("🟢 Perfil WhatsApp **conectado**")
-    elif _status_wa == "nao_conectado":
-        st.warning("🟡 Perfil WhatsApp **não conectado** — escaneie o QR")
-    elif _status_wa == "erro":
-        st.error("🔴 Falha ao verificar o perfil WhatsApp")
-    else:
-        st.caption("🟡 Status do perfil: não verificado")
-    if st.button("🔄 Verificar estado do perfil", use_container_width=True):
-        _checar_estado_perfil()
-    if st.button(
-        "📲 Conectar WhatsApp Web (escanear QR)", use_container_width=True
-    ):
-        conectar_whatsapp_web()
-
-    st.divider()
-    _salvar_config_alerta()
-    if "wa_feedback" in st.session_state:
-        _tipo_fb, _msg_fb = st.session_state.pop("wa_feedback")
-        if _tipo_fb == "ok":
-            st.success(f"📱 {_msg_fb}")
-        elif _tipo_fb == "info":
-            st.info(_msg_fb)
-        else:
-            st.error(f"{_msg_fb}\n\nConfira se o WhatsApp Web está **conectado "
-                     "no perfil de automação** (botão 📲 Conectar WhatsApp Web, "
-                     "acima, para escanear o QR). "
-                     "Registrado na aba 🐞 Registro de Erros.")
-    if st.button("🔔 Enviar alerta de teste", use_container_width=True):
-        comp_ativa = _canais_ativos()
-        if not comp_ativa:
-            st.warning(
-                "⚠️ Nenhum canal de alerta ativado. Marque/Configure "
-                "**E-mail**, **Twilio** ou **Grupo WhatsApp (Web)** acima."
-            )
-        else:
-            enviar_alerta_seguranca(
-                "🔧 TESTE",
-                "Teste de notificação — configuração de alertas verificada com sucesso!",
-            )
-    if st.button("🚨 Simular acesso negado (gatilho)", use_container_width=True):
-        comp_ativa = _canais_ativos()
-        if not comp_ativa:
-            st.warning(
-                "⚠️ Nenhum canal de alerta ativado. Marque/Configure "
-                "**E-mail**, **Twilio** ou **Grupo WhatsApp (Web)** acima."
-            )
-        else:
-            enviar_alerta_seguranca(
-                "Nível 3 – Ministro do Meio Ambiente",
-                "Tentativa de acesso negada (simulação de teste) — biometria não reconhecida.",
-            )
-    if st.button("📱 Testar envio ao grupo (WhatsApp Web)", use_container_width=True):
-        if not st.session_state.get("cfg_wagrupo_ativo", False):
-            st.warning(
-                "⚠️ Marque **Ativar alerta no grupo WhatsApp Web** acima "
-                "para testar o envio."
-            )
-        elif not _normalizar_grupo_id(
-            st.session_state.get("cfg_wagrupo_id", "")
-        ):
-            st.warning(
-                "⚠️ Preencha o **ID do grupo** (código do link de convite) "
-                "antes de testar."
-            )
-        else:
-            st.session_state.pop("wa_feedback", None)
-            enviar_whatsapp_grupo(
-                "🔧 TESTE",
-                "Teste de notificação — configuração de alertas verificada com sucesso!",
-            )
+if "home_aviso" in st.session_state:
+    _aviso = st.session_state.pop("home_aviso")
+    st.warning(_aviso)
 
 
 def ao_trocar_aba_guard(fn, modulo):
@@ -3750,10 +2968,6 @@ def ao_trocar_aba_guard(fn, modulo):
             f"Registro de Erros para ajuda. ({e})"
         )
 
-
-if "home_aviso" in st.session_state:
-    _aviso = st.session_state.pop("home_aviso")
-    st.warning(_aviso)
 
 
 if opcao == "📸 Cadastro de Colaboradores":
